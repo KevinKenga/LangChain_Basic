@@ -155,23 +155,6 @@ text to the chat model as context so it answers **using that document**
 instead of just its general knowledge. Smaller-scale version of the same
 idea as the `LangChainPDFExtract` project (PDFs -> OpenAI -> SQL Server).
 
-## File size limit + chunking (added after hitting a 602 MB CSV)
-
-Picking a huge file (e.g. a multi-million-row CSV) in option `[2]` used to
-hang, because the whole file gets read into memory as one string and then
-sent to OpenAI as one oversized embedding request. Two fixes:
-
-- **2 MB file size cap** in `embedding_utils.py` (`MAX_FILE_BYTES`). Pick a
-  file bigger than that and you get a clear message instead of a hang/crash,
-  telling you to use a smaller file or paste a snippet with option `[1]`.
-  A multi-million-row dataset isn't a good fit for this kind of per-file
-  embedding anyway - that's hundreds of thousands of paid API calls.
-- **Chunking** (`chunk_text()`): text is split into ~1000-character pieces
-  with a 100-character overlap (so an idea isn't lost right at a chunk
-  boundary) before being embedded. This matters for OpenAI's embedding
-  models, which reject text over ~8,191 tokens (~6,000 words) in one call -
-  a multi-page PDF/Word document could already be that long.
-
 ## Notes / gotchas
 
 - Always run these with `python3`, not `py` (`py` is a Windows-only command

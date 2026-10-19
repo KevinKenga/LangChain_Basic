@@ -2,4 +2,3 @@
 __pycache__/
 *.pyc
 pdfs/
-doc_embeddings.json

@@ -169,15 +169,9 @@ def get_text_from_user(prompt_label="text"):
 
 
 def get_documents_from_user():
-    """Same idea as get_text_from_user, but splits the result into chunks
-    with chunk_text() and returns them as a list (embed_documents() expects
-    a list; multiple chunks means a long file becomes several separate
-    "documents" instead of one oversized one)."""
-    text = get_text_from_user(prompt_label="document(s)")
-    chunks = chunk_text(text)
-    if len(chunks) > 1:
-        print(f"Text was split into {len(chunks)} chunks for embedding.")
-    return chunks
+    """Same idea as get_text_from_user, but returns a list with one document
+    in it (embed_documents() expects a list, even for a single document)."""
+    return [get_text_from_user(prompt_label="document(s)")]
 
 
 def cosine_similarity(vec_a, vec_b):

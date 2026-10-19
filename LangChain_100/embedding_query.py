@@ -1,6 +1,10 @@
 '''
 OpenAIEmbeddings()
+embed_query is used when you want to embed a single query or small piece of text. 
+It returns a vector representation of the input text, which can be used for various tasks such as semantic search, clustering, or similarity comparisons.
 
+embed_docs are used with corpus of documents, or multiple paragraphs of text. 
+It returns a list of vector representations, one for each document or paragraph in the input list. This is useful for tasks like document retrieval, topic modeling, or any application where you need to process and analyze multiple pieces of text at once.
 '''
 from langchain_openai import OpenAIEmbeddings
 from dotenv import load_dotenv
