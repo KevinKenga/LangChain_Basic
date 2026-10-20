@@ -5,3 +5,4 @@ __pycache__/
 .env
 pdfs/
 doc_embeddings.json
+kev_chroma_db/
