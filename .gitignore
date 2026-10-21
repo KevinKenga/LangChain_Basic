@@ -6,3 +6,4 @@ __pycache__/
 pdfs/
 doc_embeddings.json
 kev_chroma_db/
+LangChain_101/reports/

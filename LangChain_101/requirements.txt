@@ -8,3 +8,7 @@ python-dotenv==1.2.2
 pypdf
 openpyxl
 python-docx
+ddgs
+requests
+google-analytics-data
+yfinance
