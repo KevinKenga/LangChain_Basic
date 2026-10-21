@@ -1,0 +1,23 @@
+# Tickers screened each day (Yahoo Finance symbols). Lines starting with # are ignored.
+# Format: TICKER  risk-tier  description
+#
+# CORE (lower risk, diversified): the base of any portfolio
+SPY    core   S&P 500 large US companies
+VTI    core   total US stock market
+VXUS   core   international stocks ex-US
+BND    core   US investment-grade bonds (stabilizer)
+SCHD   core   US dividend-paying companies
+#
+# GROWTH (higher risk: sector funds can fall 30-50% in a bad year)
+QQQ    growth Nasdaq 100 tech-heavy
+XLK    growth technology sector
+SMH    growth semiconductors
+SOXX   growth semiconductors (alternative)
+XLV    growth healthcare sector
+XLE    growth energy sector
+XLI    growth industrials sector
+ICLN   growth clean energy
+#
+# SPECULATIVE (very high risk: can lose most of their value)
+ARKK   speculative innovation / disruptive growth
+GLD    hedge  gold (store of value during stress)
