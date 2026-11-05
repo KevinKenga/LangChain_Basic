@@ -9,8 +9,11 @@ kev_chroma_db/
 LangChain_101/reports/
 hac_rag_db/
 chroma_db/
-
-# Instructor repositories cloned locally (tracked in their own GitHub repos)
-Oracle_26_30_Oct/
-CrewAI-MultiAgentSystem-using-Azure/
-RAG_with_QueryExpansion_Reranker/
+faiss_index/
+venv/
+.env.*
+!.env.example
+.agents/
+.claude/
+# leftover duplicate data (real project is Oracle_26_30_Oct/annual-report-rag)
+/annual-report-rag/

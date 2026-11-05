@@ -1,0 +1,10 @@
+# LangGraph: builds the supervisor graph.
+langgraph>=0.2
+# OpenAI SDK for the LLM calls.
+openai>=1.40
+# Read text from PDFs.
+pypdf>=4.0
+# Generate the 2 sample PDFs.
+reportlab>=4.0
+# Load OPENAI_API_KEY from .env.
+python-dotenv>=1.0

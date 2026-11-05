@@ -1,11 +1,6 @@
 
 # Annual Report RAG — Guardrails, Reranking and Human-in-the-Loop
 
-> Copy of the class demo from [SetuAI/Oracle_26_30_Oct](https://github.com/SetuAI/Oracle_26_30_Oct)
-> with my local changes (web UI in `ui/`, `api/main.py`, requirements pinned for an Intel Mac).
-> The annual-report PDFs are not committed: copy `annual-report-rag/data/raw/` from that repo
-> into `data/raw/` here, then run `python run_ingestion.py`.
-
 A teaching project. A LangGraph pipeline that answers **year-over-year comparison
 questions** about annual reports, with guardrails on the way in and out, a
 cross-encoder reranker in the middle, and a human review step that pauses the

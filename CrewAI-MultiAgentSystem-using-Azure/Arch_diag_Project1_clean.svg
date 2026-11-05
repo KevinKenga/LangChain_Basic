@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1150 700" width="1150" height="700" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e03131"/>
+    </marker>
+    <marker id="arrOrange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#f08c00"/>
+    </marker>
+    <marker id="arrGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2f9e44"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1150" height="700" fill="#ffffff"/>
+
+  <!-- Title -->
+  <rect x="240" y="28" width="620" height="66" rx="6" fill="none" stroke="#1e1e1e" stroke-width="2"/>
+  <text x="262" y="58" font-size="19" fill="#e03131">Building multi-agent system using CrewAI + Deployment, Monitoring</text>
+  <text x="262" y="82" font-size="19" fill="#e03131">on Azure</text>
+
+  <!-- Section labels -->
+  <text x="120" y="140" font-size="16" fill="#2f9e44">Frontend &amp; API</text>
+  <text x="430" y="140" font-size="16" fill="#2f9e44">Crew AI (Agentic Intelligence)</text>
+  <text x="880" y="140" font-size="16" fill="#2f9e44">Azure Cloud services</text>
+
+  <!-- Streamlit Dashboard -->
+  <rect x="120" y="165" width="165" height="165" rx="14" fill="none" stroke="#1e1e1e" stroke-width="2"/>
+  <text x="202" y="240" font-size="17" fill="#1e1e1e" text-anchor="middle">Streamlit</text>
+  <text x="202" y="264" font-size="17" fill="#1e1e1e" text-anchor="middle">Dashboard</text>
+
+  <!-- FastAPI Server -->
+  <rect x="120" y="440" width="165" height="150" rx="14" fill="none" stroke="#1e1e1e" stroke-width="2"/>
+  <text x="202" y="495" font-size="17" fill="#f08c00" text-anchor="middle">FAST API</text>
+  <text x="202" y="519" font-size="17" fill="#f08c00" text-anchor="middle">Server (POST</text>
+  <text x="202" y="543" font-size="17" fill="#f08c00" text-anchor="middle">/analyze)</text>
+
+  <!-- Streamlit <-> FastAPI -->
+  <line x1="175" y1="330" x2="175" y2="436" stroke="#e03131" stroke-width="2" marker-end="url(#arrRed)"/>
+  <line x1="232" y1="440" x2="232" y2="334" stroke="#e03131" stroke-width="2" marker-end="url(#arrRed)"/>
+  <text x="105" y="378" font-size="15" fill="#1971c2" text-anchor="end">HTTP</text>
+  <text x="105" y="398" font-size="15" fill="#1971c2" text-anchor="end">request</text>
+
+  <!-- FastAPI -> Orchestrator -->
+  <path d="M285,470 L350,470 L350,214 L426,214" fill="none" stroke="#e03131" stroke-width="2" marker-end="url(#arrRed)"/>
+  <text x="300" y="180" font-size="15" fill="#1971c2">Triggers</text>
+  <text x="300" y="199" font-size="15" fill="#1971c2">analysis</text>
+
+  <!-- Crew AI Orchestrator -->
+  <rect x="430" y="180" width="290" height="70" rx="12" fill="none" stroke="#1e1e1e" stroke-width="2"/>
+  <text x="575" y="222" font-size="17" fill="#1e1e1e" text-anchor="middle">Crew AI Orchestrator - crew.py</text>
+
+  <!-- Orchestrator -> Agents -->
+  <line x1="510" y1="250" x2="472" y2="326" stroke="#f08c00" stroke-width="2" marker-end="url(#arrOrange)"/>
+  <line x1="650" y1="250" x2="716" y2="336" stroke="#f08c00" stroke-width="2" marker-end="url(#arrOrange)"/>
+
+  <!-- Quant Analyst Agent -->
+  <polygon points="470,330 560,400 470,470 380,400" fill="none" stroke="#1e1e1e" stroke-width="2"/>
+  <text x="470" y="384" font-size="15" fill="#f08c00" text-anchor="middle">Quant</text>
+  <text x="470" y="404" font-size="15" fill="#f08c00" text-anchor="middle">Analyst</text>
+  <text x="470" y="424" font-size="15" fill="#f08c00" text-anchor="middle">Agent</text>
+
+  <!-- Strategist Analyst -->
+  <polygon points="720,340 800,400 720,460 640,400" fill="none" stroke="#1e1e1e" stroke-width="2"/>
+  <text x="720" y="395" font-size="15" fill="#f08c00" text-anchor="middle">Strategist</text>
+  <text x="720" y="415" font-size="15" fill="#f08c00" text-anchor="middle">Analyst</text>
+
+  <!-- Quant -> Strategist -->
+  <line x1="562" y1="400" x2="636" y2="400" stroke="#e03131" stroke-width="2" marker-end="url(#arrRed)"/>
+  <text x="599" y="388" font-size="14" fill="#e03131" text-anchor="middle">Passes financial Context</text>
+
+  <!-- Agents -> Tools -->
+  <line x1="470" y1="470" x2="470" y2="538" stroke="#2f9e44" stroke-width="2" marker-end="url(#arrGreen)"/>
+  <line x1="722" y1="460" x2="738" y2="538" stroke="#2f9e44" stroke-width="2" marker-end="url(#arrGreen)"/>
+
+  <!-- Yahoo finance tool -->
+  <circle cx="470" cy="600" r="58" fill="none" stroke="#1e1e1e" stroke-width="2"/>
+  <text x="470" y="586" font-size="15" fill="#1e1e1e" text-anchor="middle">Yahoo</text>
+  <text x="470" y="606" font-size="15" fill="#1e1e1e" text-anchor="middle">finance</text>
+  <text x="470" y="626" font-size="15" fill="#1e1e1e" text-anchor="middle">tool</text>
+
+  <!-- Firecrawl Scraper -->
+  <circle cx="740" cy="600" r="58" fill="none" stroke="#1e1e1e" stroke-width="2"/>
+  <text x="740" y="596" font-size="15" fill="#1e1e1e" text-anchor="middle">Firecrawl</text>
+  <text x="740" y="616" font-size="15" fill="#1e1e1e" text-anchor="middle">Scraper</text>
+
+  <!-- Orchestrator -> Blob -->
+  <line x1="722" y1="200" x2="874" y2="200" stroke="#f08c00" stroke-width="2" marker-end="url(#arrOrange)"/>
+  <text x="798" y="172" font-size="15" fill="#e03131" text-anchor="middle">Upload final</text>
+  <text x="798" y="191" font-size="15" fill="#e03131" text-anchor="middle">report</text>
+
+  <!-- Orchestrator -> Postgres -->
+  <line x1="716" y1="252" x2="876" y2="466" stroke="#f08c00" stroke-width="2" marker-end="url(#arrOrange)"/>
+  <text x="800" y="360" font-size="15" fill="#e03131" text-anchor="middle">Log , Metadata</text>
+
+  <!-- Azure Blob Storage -->
+  <rect x="880" y="150" width="210" height="160" rx="14" fill="none" stroke="#1e1e1e" stroke-width="2"/>
+  <text x="900" y="182" font-size="16" fill="#1e1e1e">Azure Blob</text>
+  <text x="900" y="204" font-size="16" fill="#1e1e1e">Storage</text>
+  <text x="900" y="226" font-size="16" fill="#1e1e1e">(.md file)</text>
+  <text x="900" y="252" font-size="16" fill="#1e1e1e">("Container" :</text>
+  <text x="900" y="274" font-size="16" fill="#1e1e1e">"reports"</text>
+  <text x="900" y="296" font-size="16" fill="#1e1e1e">)</text>
+
+  <!-- Azure PostgreSQL -->
+  <rect x="880" y="470" width="245" height="130" rx="14" fill="none" stroke="#1e1e1e" stroke-width="2"/>
+  <text x="898" y="508" font-size="16" fill="#f08c00">Azure PostgreSQL</text>
+  <text x="898" y="530" font-size="16" fill="#f08c00">Flexible Server Service</text>
+  <text x="898" y="566" font-size="16" fill="#f08c00">Table : reports_log</text>
+</svg>

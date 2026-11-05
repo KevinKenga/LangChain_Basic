@@ -1,0 +1,10 @@
+langchain 
+openai 
+langchain-community 
+langchain-openai
+langchain-core
+python-dotenv
+crewai
+crewai[tools]
+streamlit
+pydantic
