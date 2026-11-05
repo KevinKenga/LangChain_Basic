@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<!--
+=====================================================================
+FILE: static/index.html
+=====================================================================
+PURPOSE
+    The browser UI. The user types a question, the page sends it to
+    POST /ask on the FastAPI server, then draws:
+      1. The final recommendation from the synthesizer.
+      2. A timeline: one bar per node, placed by its start and end ms,
+         so overlapping bars show parallel execution.
+      3. Totals: wall-clock time vs sum of the 4 agent times.
+      4. One card per agent: its finding, its retrieve / re-rank / LLM
+         split, and a before-vs-after re-ranking table.
+
+HOW TO RUN
+    Start the server (uvicorn app.server:app --reload) and open
+    http://127.0.0.1:8000 . Do not open this file directly.
+
+EXPECTED OUTPUT
+    After 3-8 seconds: recommendation, timeline, and 4 agent cards.
+=====================================================================
+-->
+<html lang="en">
+<head>
+  <!-- Use UTF-8 so ₹ and other symbols display correctly. -->
+  <meta charset="UTF-8">
+  <!-- Make the page fit phone screens. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Browser tab title. -->
+  <title>NimbusDesk Parallel RAG</title>
+  <style>
+    /* Colour tokens, so one change updates the whole page. */
+    :root { --bg:#f6f7f9; --card:#fff; --ink:#1d2330; --muted:#667085; --line:#e4e7ec;
+            --a1:#2f6fed; --a2:#12a37f; --a3:#d97706; --a4:#c0392b; --syn:#6b46c1; }
+    /* Base page font and background. */
+    body { margin:0; font-family:system-ui,Segoe UI,Arial,sans-serif; background:var(--bg); color:var(--ink); }
+    /* Centre the content and limit its width. */
+    main { max-width:1100px; margin:0 auto; padding:24px 16px; }
+    /* White boxes for each section. */
+    .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+    /* Question input row. */
+    .row { display:flex; gap:8px; flex-wrap:wrap; }
+    /* The text box grows to fill the row. */
+    input { flex:1; min-width:240px; padding:10px; font-size:15px; border:1px solid var(--line); border-radius:8px; }
+    /* Buttons. */
+    button { padding:10px 14px; border:0; border-radius:8px; background:var(--a1); color:#fff; cursor:pointer; font-size:14px; }
+    /* Example-question buttons are lighter. */
+    button.ex { background:#eef2ff; color:#334; font-size:13px; }
+    /* Grey small text. */
+    .muted { color:var(--muted); font-size:13px; }
+    /* Keep LLM line breaks. */
+    .pre { white-space:pre-wrap; line-height:1.5; }
+    /* Timeline: one row per node. */
+    .tl-row { display:flex; align-items:center; margin:6px 0; }
+    /* Node name column. */
+    .tl-label { width:170px; font-size:13px; flex-shrink:0; }
+    /* The track the bar sits on. */
+    .tl-track { position:relative; flex:1; height:22px; background:#f0f2f5; border-radius:4px; }
+    /* The bar itself; left and width are set from JavaScript. */
+    .tl-bar { position:absolute; top:0; height:22px; border-radius:4px; color:#fff; font-size:11px; line-height:22px; padding-left:6px; white-space:nowrap; overflow:hidden; }
+    /* Totals boxes side by side. */
+    .totals { display:flex; gap:12px; flex-wrap:wrap; margin-top:12px; }
+    /* One totals box. */
+    .total { flex:1; min-width:180px; background:#f8fafc; border:1px solid var(--line); border-radius:8px; padding:10px; }
+    /* Big number inside a totals box. */
+    .total b { font-size:22px; display:block; }
+    /* Agent cards in a 2-column grid (1 column on phones). */
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(480px,1fr)); gap:16px; }
+    @media (max-width:560px) { .grid { grid-template-columns:1fr; } }
+    /* Re-rank table. */
+    table { width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; }
+    /* Table cells. */
+    th, td { border-bottom:1px solid var(--line); padding:4px 6px; text-align:left; vertical-align:top; }
+    /* Kept chunks are highlighted green. */
+    tr.kept { background:#ecfdf3; }
+    /* Dropped chunks are faded. */
+    tr.dropped { color:#98a2b3; }
+    /* Rank movement arrows. */
+    .up { color:#12a37f; font-weight:600; } .down { color:#c0392b; font-weight:600; }
+    /* Let the wide table scroll inside its card on small screens. */
+    .scroll { overflow-x:auto; }
+  </style>
+</head>
+<body>
+<main>
+  <!-- Header. -->
+  <h1>NimbusDesk: "Should we build it?"</h1>
+  <!-- One-line explanation of the flow. -->
+  <p class="muted">Your question goes to 4 agents at the same time. Each agent: vector search (top 10) → cross-encoder re-rank (keep 3) → LLM finding. Then a synthesizer combines the 4 findings.</p>
+
+  <!-- Question input section. -->
+  <div class="card">
+    <div class="row">
+      <!-- The question box. -->
+      <input id="q" placeholder="Ask a product question..." value="Customers keep asking for a WhatsApp integration — is it worth it?">
+      <!-- Submit button; runs ask() on click. -->
+      <button onclick="ask()">Ask</button>
+    </div>
+    <!-- Example questions from business_scenario.md; filled by JavaScript. -->
+    <div class="row" id="examples" style="margin-top:10px"></div>
+    <!-- Status text (loading / errors). -->
+    <p id="status" class="muted"></p>
+  </div>
+
+  <!-- Results area; hidden until the first answer arrives. -->
+  <div id="results" style="display:none">
+    <!-- Final recommendation. -->
+    <div class="card"><h2>Recommendation</h2><div id="answer" class="pre"></div></div>
+    <!-- Timeline and totals. -->
+    <div class="card"><h2>Timeline (parallelism)</h2><div id="timeline"></div><div class="totals" id="totals"></div></div>
+    <!-- One card per agent. -->
+    <h2>Agents and re-ranking</h2>
+    <div class="grid" id="agents"></div>
+  </div>
+</main>
+
+<script>
+// Bar colour for each node name.
+const COLORS = { customer_voice:"var(--a1)", usage_analytics:"var(--a2)", market:"var(--a3)", risk:"var(--a4)", synthesizer:"var(--syn)" };
+
+// The four example questions from business_scenario.md.
+const EXAMPLES = [
+  "Should we build AI-suggested ticket replies in Q1?",
+  "Customers keep asking for a WhatsApp integration — is it worth it?",
+  "Why is churn rising in the 11–50 seat segment, and what should we fix first?",
+  "Should we prioritise WhatsApp or AI replies first?",
+];
+
+// Create one button per example question.
+for (const text of EXAMPLES) {
+  // Make the button element.
+  const b = document.createElement("button");
+  // Style it as an example button.
+  b.className = "ex";
+  // Button text is the question.
+  b.textContent = text;
+  // On click: put the question in the box and run it.
+  b.onclick = () => { document.getElementById("q").value = text; ask(); };
+  // Add it to the page.
+  document.getElementById("examples").appendChild(b);
+}
+
+// Escape text before putting it into HTML, so chunk text can't break the page.
+function esc(s) {
+  // Replace the 3 characters that have meaning in HTML.
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Send the question to the server and draw the results.
+async function ask() {
+  // Read the question from the box.
+  const question = document.getElementById("q").value.trim();
+  // Do nothing for an empty question.
+  if (!question) return;
+  // Show a loading message.
+  document.getElementById("status").textContent = "Running 4 agents in parallel...";
+  try {
+    // POST the question as JSON to the FastAPI endpoint.
+    const res = await fetch("/ask", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({question}) });
+    // Turn the HTTP error into a readable message.
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    // Parse the JSON body.
+    const data = await res.json();
+    // Draw everything.
+    render(data);
+    // Clear the loading message.
+    document.getElementById("status").textContent = "";
+  } catch (err) {
+    // Show the error to the user.
+    document.getElementById("status").textContent = "Error: " + err.message;
+  }
+}
+
+// Draw the full result.
+function render(data) {
+  // Show the results area.
+  document.getElementById("results").style.display = "block";
+  // Synthesizer's recommendation text.
+  document.getElementById("answer").textContent = data.synthesizer.answer;
+  // Timeline and totals.
+  renderTimeline(data);
+  // Agent cards.
+  renderAgents(data.agents);
+}
+
+// Draw one bar per node, positioned by start_ms and end_ms.
+function renderTimeline(data) {
+  // 4 agents plus the synthesizer, in time order.
+  const nodes = [...data.agents, { name:"synthesizer", label:"Synthesizer", ...data.synthesizer }];
+  // The total time is 100% of the track width.
+  const total = data.wall_clock_ms;
+  // Build one HTML row per node.
+  document.getElementById("timeline").innerHTML = nodes.map(n => {
+    // Left edge as a percentage of total time.
+    const left = (n.start_ms / total) * 100;
+    // Bar width as a percentage of total time (min 1% so it stays visible).
+    const width = Math.max(((n.end_ms - n.start_ms) / total) * 100, 1);
+    // Row: label + track + bar with the duration written inside.
+    return `<div class="tl-row">
+      <div class="tl-label">${esc(n.label)}<br><span class="muted">${n.start_ms} → ${n.end_ms} ms</span></div>
+      <div class="tl-track"><div class="tl-bar" style="left:${left}%;width:${width}%;background:${COLORS[n.name]}">${n.duration_ms} ms</div></div>
+    </div>`;
+  }).join("");
+  // How many times faster parallel was than one-after-another.
+  const speedup = (data.sum_of_agents_ms / data.parallel_span_ms).toFixed(1);
+  // Spread between the first and last agent start (should be a few ms).
+  const starts = data.agents.map(a => a.start_ms);
+  // Max start minus min start.
+  const startGap = (Math.max(...starts) - Math.min(...starts)).toFixed(1);
+  // Totals boxes.
+  document.getElementById("totals").innerHTML = `
+    <div class="total"><span class="muted">Wall-clock (whole request)</span><b>${data.wall_clock_ms} ms</b></div>
+    <div class="total"><span class="muted">4 agents ran in (parallel)</span><b>${data.parallel_span_ms} ms</b></div>
+    <div class="total"><span class="muted">Sum of 4 agents (if sequential)</span><b>${data.sum_of_agents_ms} ms</b></div>
+    <div class="total"><span class="muted">Speed-up / start gap</span><b>${speedup}× / ${startGap} ms</b></div>`;
+}
+
+// Draw one card per agent with the finding and the re-rank table.
+function renderAgents(agents) {
+  // Build all cards.
+  document.getElementById("agents").innerHTML = agents.map(a => `
+    <div class="card" style="border-top:4px solid ${COLORS[a.name]}">
+      <h3 style="margin:0 0 4px">${esc(a.label)}</h3>
+      <div class="muted">Searched: ${a.sources.join(", ")} · total ${a.duration_ms} ms =
+        retrieve ${a.retrieve_ms} + re-rank ${a.rerank_ms} + LLM ${a.llm_ms}</div>
+      <div class="pre" style="margin-top:8px">${esc(a.finding)}</div>
+      <details style="margin-top:8px" open>
+        <summary>Before vs after re-ranking (${a.chunks.length} candidates)</summary>
+        <div class="scroll">${rerankTable(a.chunks)}</div>
+      </details>
+    </div>`).join("");
+}
+
+// Build the before/after table for one agent's chunks.
+function rerankTable(chunks) {
+  // One row per chunk, already sorted by re-rank rank.
+  const rows = chunks.map(c => {
+    // Positive = moved up after re-ranking.
+    const move = c.vector_rank - c.rerank_rank;
+    // Arrow and colour for the move.
+    const moveHtml = move > 0 ? `<span class="up">▲${move}</span>` : move < 0 ? `<span class="down">▼${-move}</span>` : "–";
+    // Row: kept rows green, dropped rows faded.
+    return `<tr class="${c.kept ? "kept" : "dropped"}">
+      <td>${c.rerank_rank}</td><td>${c.vector_rank}</td><td>${moveHtml}</td>
+      <td>${c.vector_score}</td><td>${c.rerank_score}</td>
+      <td>${esc(c.source)} p.${c.page}</td>
+      <td>${c.kept ? "✔" : ""}</td>
+      <td title="${esc(c.text)}">${esc(c.text.slice(0, 90))}…</td></tr>`;
+  }).join("");
+  // Table header + rows.
+  return `<table><thead><tr><th>Re-rank #</th><th>Vector #</th><th>Move</th><th>Vector score</th>
+    <th>Re-rank score</th><th>Source</th><th>Kept</th><th>Chunk text</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+</script>
+</body>
+</html>

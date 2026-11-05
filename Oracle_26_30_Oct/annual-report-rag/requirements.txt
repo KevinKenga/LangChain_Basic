@@ -1,0 +1,141 @@
+# ==============================================================================
+# PROJECT DEPENDENCIES
+# ==============================================================================
+# Install everything with:
+#
+#     SYSTEM_VERSION_COMPAT=0 pip install -r requirements.txt
+#
+# The >= means "this version or newer". We pin a minimum rather than an exact
+# version so the project keeps working as libraries release fixes, while still
+# guaranteeing the features we rely on are present.
+#
+# INTEL MAC NOTE: on an Intel (x86_64) Mac, several libraries (grpcio,
+# onnxruntime, ...) only publish wheels tagged "macosx_11_0"/"macosx_13_0".
+# Some Python builds report the OS as "10.16" and pip rejects those wheels,
+# then tries to compile from source and fails. The SYSTEM_VERSION_COMPAT=0
+# above makes pip see the real macOS version so it accepts the wheels.
+# ==============================================================================
+
+
+# ------------------------------------------------------------------------------
+# CORE - talking to the language model
+# ------------------------------------------------------------------------------
+
+# The official OpenAI client. Used for three separate jobs in this project:
+# generating answers, running the guardrail checks, and creating embeddings.
+openai
+
+# Reads a file named .env and loads its contents into environment variables.
+# This is how the API key stays out of the code and out of version control.
+python-dotenv
+
+
+# ------------------------------------------------------------------------------
+# INGESTION - turning PDFs into searchable text
+# ------------------------------------------------------------------------------
+
+# Extracts text from PDFs and returns markdown, preserving headings and reading
+# order. Fast, small, and needs no machine learning models downloaded.
+#
+# Pinned to 1.28.2: from PyMuPDF 1.28.3 onward, prebuilt wheels are published
+# for Apple Silicon (arm64) Macs only. On an Intel (x86_64) Mac, pip falls back
+# to compiling the whole MuPDF C library from source, which fails unless you
+# have a full Xcode toolchain. 1.28.2 is the newest version that ships a ready
+# macOS x86_64 wheel (and it still has arm64 wheels, so it works everywhere).
+pymupdf4llm==1.28.2
+
+# Kept explicit so the resolver cannot drift onto a version without an
+# x86_64 wheel; pymupdf4llm 1.28.2 requires exactly this version anyway.
+pymupdf==1.28.2
+
+# Splits long text into chunks. We use its markdown-aware splitter, which
+# prefers to cut at heading and paragraph boundaries rather than mid-sentence.
+langchain-text-splitters
+
+
+# ------------------------------------------------------------------------------
+# STORAGE - the vector database
+# ------------------------------------------------------------------------------
+
+# Chroma stores our chunks along with their embeddings and metadata, and finds
+# the closest matches to a question. It runs locally and saves to a folder on
+# disk, so there is nothing to sign up for and nothing to configure.
+chromadb
+
+# The bridge between LangChain and OpenAI. We use it for the embedding model
+# that Chroma calls when storing and searching.
+langchain-openai
+
+
+# ------------------------------------------------------------------------------
+# RERANKING - reordering search results properly
+# ------------------------------------------------------------------------------
+
+# Runs the cross-encoder model that re-scores retrieved chunks against the
+# question. This runs on your own machine and downloads a model of roughly
+# 90 MB the first time it is used, so the first run is slower than later ones.
+#
+# Pinned to 3.0.1: newer versions pull in transformers 5.x, which needs
+# torch >= 2.4 -- and torch 2.2.2 below is the newest Intel Macs can get.
+sentence-transformers==3.0.1
+
+# Held on the 4.x line for the same reason as torch 2.2.2 above: the 5.x
+# releases refuse to run PyTorch models on torch < 2.4.
+transformers==4.44.2
+
+# torch underneath sentence-transformers. Pinned to 2.2.2: from torch 2.3
+# onward, macOS wheels are published for Apple Silicon (arm64) only. On an
+# Intel Mac, pip would fall back to building from source, which fails.
+# 2.2.2 is the newest version with a ready macOS x86_64 wheel.
+torch==2.2.2
+
+
+# ------------------------------------------------------------------------------
+# ORCHESTRATION - wiring the steps together
+# ------------------------------------------------------------------------------
+
+# LangGraph lets us define the pipeline as a graph of nodes. It is what gives us
+# the interrupt feature that makes human-in-the-loop possible: the graph can stop
+# mid-run, wait for a person, and then continue from exactly where it paused.
+langgraph
+
+# ------------------------------------------------------------------------------
+# VALIDATION - checking the shape of model output
+# ------------------------------------------------------------------------------
+
+# Pydantic lets us describe the structure we expect as a Python class, then
+# checks real data against it. This is the engine behind the format guardrail.
+pydantic
+
+
+# ------------------------------------------------------------------------------
+# API - the optional web backend
+# ------------------------------------------------------------------------------
+# Only needed if you build the FastAPI layer. Everything else in the project runs
+# without these two.
+
+# The web framework that exposes the pipeline over HTTP.
+fastapi
+
+# The server that actually runs the FastAPI application.
+uvicorn
+
+# ------------------------------------------------------------------------------
+# INTEL MAC PINS - indirect dependencies that need exact versions
+# ------------------------------------------------------------------------------
+# These are not imported by this project directly, but on an Intel Mac the
+# newest versions have no macOS x86_64 wheels and the install fails while
+# trying to compile them. Pinned to the newest versions that ship a ready
+# Intel wheel. On an Apple Silicon Mac you can usually remove these pins.
+
+# Used by chromadb (its default embedding function) and pymupdf-layout.
+# From 1.24 onward, macOS wheels are arm64-only.
+onnxruntime==1.23.2
+
+# Used by transformers (model file loading). From 0.5 onward, no macOS
+# x86_64 wheels are published.
+safetensors==0.4.5
+
+# torch 2.2.2 above was built against NumPy 1.x; importing it with NumPy 2
+# fails, so hold NumPy below 2 for the whole environment.
+numpy<2

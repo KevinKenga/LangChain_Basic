@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FlowDesk Product Assistant</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◆</span>
+      <div>
+        <h1>FlowDesk Product Assistant</h1>
+        <p class="sub">Agentic RAG · tool-calling research agent · reranker · guardrails · human-in-the-loop</p>
+      </div>
+    </div>
+    <button id="themeToggle" class="ghost" title="Toggle theme">◐</button>
+  </header>
+
+  <main>
+    <!-- ================= QUERY ================= -->
+    <section class="card query-card">
+      <form id="queryForm">
+        <div class="row">
+          <label class="field grow">
+            <span>Question</span>
+            <input id="question" type="text" autocomplete="off"
+                   placeholder="Ask about FlowDesk pricing, plans, releases, competitors, customers or metrics...">
+          </label>
+          <label class="check big">
+            <input type="checkbox" id="rerankToggle" checked> Cross-encoder reranker
+          </label>
+          <button id="runBtn" type="submit" class="primary">Ask ▸</button>
+        </div>
+        <div id="samples" class="chips"></div>
+      </form>
+    </section>
+
+    <!-- ================= PIPELINE STEPPER ================= -->
+    <nav id="stepper" class="stepper" aria-label="Pipeline stages">
+      <ol id="steps"></ol>
+    </nav>
+
+    <div id="errorBox" class="card error hidden"></div>
+
+    <div id="stages" class="hidden">
+      <!-- 1. Input guardrail -->
+      <section class="stage" id="panel-input_guardrail">
+        <div class="stage-head"><span class="num">1</span><h2>Input guardrail</h2>
+          <span class="hint">Is this question on-topic, or a prompt-injection / off-topic attempt?</span>
+          <span class="timing" data-for="input_guardrail"></span></div>
+        <div class="card body" id="guardrailBody"><div class="placeholder">Waiting...</div></div>
+      </section>
+
+      <!-- 2. Research agent -->
+      <section class="stage" id="panel-research_agent">
+        <div class="stage-head"><span class="num">2</span><h2>Research agent</h2>
+          <span class="hint">ReAct agent plans searches and calls the Chroma tool, up to
+            <span class="k-tools">4</span> calls per round; may retry after grading.</span>
+          <span class="timing" data-for="research_agent"></span></div>
+        <div class="rounds" id="researchRounds"><div class="placeholder">Waiting...</div></div>
+      </section>
+
+      <!-- 3. Rerank -->
+      <section class="stage" id="panel-rerank">
+        <div class="stage-head"><span class="num">3</span><h2>Rerank</h2>
+          <span class="hint">Cross-encoder rescoring of the agent's candidates; the top
+            <span class="k-rr">6</span> reach the generator.</span>
+          <span class="timing" data-for="rerank"></span></div>
+        <div class="rounds" id="rerankRounds"><div class="placeholder">Waiting...</div></div>
+      </section>
+
+      <!-- 4. Grade context -->
+      <section class="stage" id="panel-grade_context">
+        <div class="stage-head"><span class="num">4</span><h2>Grade context</h2>
+          <span class="hint">Is the retrieved context enough to answer? If not, research retries.</span>
+          <span class="timing" data-for="grade_context"></span></div>
+        <div class="rounds" id="gradeRounds"><div class="placeholder">Waiting...</div></div>
+      </section>
+
+      <!-- 5. Generate -->
+      <section class="stage" id="panel-generate">
+        <div class="stage-head"><span class="num">5</span><h2>Generate draft</h2>
+          <span class="hint">LLM writes the answer from the reranked extracts only, with citations.</span>
+          <span class="timing" data-for="generate"></span></div>
+        <div class="card body" id="generateBody"><div class="placeholder">Waiting...</div></div>
+      </section>
+
+      <!-- 6. Output guardrail -->
+      <section class="stage" id="panel-output_guardrail">
+        <div class="stage-head"><span class="num">6</span><h2>Output guardrail</h2>
+          <span class="hint">PII masking, number-grounding score and sensitive intent check.</span>
+          <span class="timing" data-for="output_guardrail"></span></div>
+        <div class="card body" id="guardrailOut"><div class="placeholder">Waiting...</div></div>
+      </section>
+
+      <!-- 7. Human review -->
+      <section class="stage hidden" id="panel-human_review">
+        <div class="stage-head"><span class="num">7</span><h2>Human review</h2>
+          <span class="hint">The graph has stopped and returned. Its state is saved until you decide.</span>
+          <span class="timing" data-for="human_review"></span></div>
+        <div class="card body review" id="reviewBody"></div>
+      </section>
+
+      <!-- 8. Final -->
+      <section class="stage" id="panel-final">
+        <div class="stage-head"><span class="num">✓</span><h2>Final answer</h2></div>
+        <div class="card body final" id="finalCard"><div class="placeholder">Waiting...</div></div>
+      </section>
+
+      <!-- 9. Audit trail -->
+      <section class="stage hidden" id="panel-audit">
+        <div class="stage-head"><span class="num">✓</span><h2>Audit trail</h2>
+          <span class="hint">Exact record of steps, searches and the answer.</span></div>
+        <div class="card body audit">
+          <pre id="auditPre"></pre>
+          <button class="ghost" id="copyAudit">Copy</button>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <div id="drawer" class="drawer hidden" role="dialog" aria-modal="true">
+    <div class="drawer-inner">
+      <div class="drawer-head">
+        <div id="drawerTitle"></div>
+        <button class="ghost" id="drawerClose">✕</button>
+      </div>
+      <div id="drawerBody" class="drawer-body"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

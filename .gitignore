@@ -7,3 +7,13 @@ pdfs/
 doc_embeddings.json
 kev_chroma_db/
 LangChain_101/reports/
+hac_rag_db/
+chroma_db/
+faiss_index/
+venv/
+.env.*
+!.env.example
+.agents/
+.claude/
+# leftover duplicate data (real project is Oracle_26_30_Oct/annual-report-rag)
+/annual-report-rag/
