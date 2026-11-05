@@ -1,6 +1,8 @@
 langchain 
 openai
 langchain-community
+pypdf
+langchain-chroma
 langchain-core
 langchain-openai
 python-dotenv
