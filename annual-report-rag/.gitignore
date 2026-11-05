@@ -1,0 +1,13 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+
+# Source PDFs and their extracted text are not committed here (get them from
+# github.com/SetuAI/Oracle_26_30_Oct, annual-report-rag/data/); vector store is rebuilt by run_ingestion.py
+data/chroma/
+data/raw/
+data/processed/
