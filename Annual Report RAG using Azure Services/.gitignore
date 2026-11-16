@@ -1,0 +1,9 @@
+.env
+pdfs/
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+
+# Over GitHub's 100 MB limit - originals are in github.com/SetuAI/Agentic-AI-in-Azure-Udemy (Git LFS)
+data/raw/eternal_*.pdf
