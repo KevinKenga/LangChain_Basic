@@ -52,6 +52,9 @@ def upload_all() -> None:
                 name=document["filename"],      # the blob's name -- same as the file's name
                 data=pdf_file,                  # the bytes to upload, streamed from disk
                 overwrite=True,                 # replace an older copy instead of failing
+                max_concurrency=4,              # send several chunks at once
+                timeout=1800,                   # allow a slow connection time to finish a large file
+                connection_timeout=600,         # do not give up on a single stalled write too early
             )
 
         size_mb = local_path.stat().st_size / 1_000_000  # file size in megabytes, for the printout

@@ -68,7 +68,7 @@ class GroundingDecision:
 
 def extract_numbers(text: str) -> List[str]:
     """Every number in the text, with commas removed so '5,000' and '5000' match."""
-    raw = re.findall(r"\d{1,3}(?:,\d{2,3})+|\d+\.?\d*", text)  # first try 1,53,670-style, then plain 21.1-style
+    raw = re.findall(r"\d{1,3}(?:,\d{2,3})+|\d+(?:\.\d+)?", text)  # first try 1,53,670-style, then plain 21.1-style (a trailing dot, as in "1.", is not part of the number)
     return [value.replace(",", "") for value in raw]           # strip the separators
 
 
@@ -99,12 +99,17 @@ def strip_year_labels(sentence: str, fiscal_years: List[str]) -> str:
 
 def split_sentences(text: str) -> List[str]:
     """Split on '. ' or a line break -- never inside 21.1 or 1,53,670."""
-    return [p for p in re.split(r"(?<=[.!?])\s+|\n+", text) if p.strip()]  # drop empty pieces
+    pieces = re.split(r"(?<=[.!?])\s+|\n+", text)  # the raw pieces
+    return [p for p in pieces if p.strip() and not re.fullmatch(r"\s*\d{1,2}[.)]\s*", p)]  # drop empty pieces and bare list markers like "1."
 
 
 # ==============================================================================
 # SECTION 2 - CHECK 1: NUMBERS, YEAR BY YEAR (free)
 # ==============================================================================
+
+HEADING_PATTERN = re.compile(                   # a line that is only a bold heading, or starts "what ..."
+    r"^\s*(?:[-*]\s+)?(?:\*\*[^*]+\*\*\s*:?\s*$|what\b[^.]*:\s*$)", re.IGNORECASE)
+
 
 def check_numbers(answer: str, sources: Dict[str, List[str]]) -> GroundingDecision:
     """
@@ -127,11 +132,14 @@ def check_numbers(answer: str, sources: Dict[str, List[str]]) -> GroundingDecisi
             current_year = year = named[0]      # ...applies here and to the lines below it
         elif len(named) > 1:                    # both years named (usually the "what changed" summary)...
             current_year = year = None          # ...numbers may come from either year
+        elif HEADING_PATTERN.match(sentence):   # a heading that names no year, e.g. "what changed"...
+            current_year = year = None          # ...ends the previous year's section
         else:                                   # no year named...
             year = current_year                 # ...inherit the last heading's year
 
         allowed = numbers_by_year[year] if year else all_numbers  # where this sentence's numbers must appear
-        for number in extract_numbers(strip_year_labels(sentence, years)):  # each figure in the sentence
+        body = re.sub(r"^\s*(?:[-*]\s+)?\d{1,2}[.)]\s+", "", sentence)  # drop a list marker such as "1. " -- it is not a figure
+        for number in extract_numbers(strip_year_labels(body, years)):  # each figure in the sentence
             found.append(number)                # count it
             if number in allowed:               # traced to the right place?
                 continue                        # fine
@@ -197,7 +205,7 @@ def check_claims(answer: str, sources: Dict[str, List[str]]) -> GroundingDecisio
         response = openai_client().chat.completions.create(  # one call to Azure OpenAI
             model=config.GUARDRAIL_DEPLOYMENT,  # the small, cheap deployment -- this is a yes/no job
             temperature=0,                      # same input -> same verdict, every time
-            max_tokens=150,                     # the reply is two short lines
+            max_completion_tokens=800,          # the reply is two short lines; room is left for the model's hidden reasoning
             messages=[{"role": "user",          # a single instruction message
                        "content": GROUNDING_PROMPT.format(sources=format_sources(sources), answer=answer)}],
         )
