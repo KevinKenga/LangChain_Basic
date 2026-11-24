@@ -1,0 +1,21 @@
+# Azure pipeline -- every package it needs, and why.
+# Install with:  pip install -r requirements.txt
+
+# --- Azure services ---
+openai                          # includes AzureOpenAI, the client for Azure OpenAI
+azure-search-documents          # Azure AI Search: create the index, upload chunks, search
+azure-storage-blob              # Azure Blob Storage: upload and download the PDFs
+
+# --- pipeline ---
+pymupdf4llm                     # PDF -> markdown, free and local (replaces Document Intelligence)
+langgraph                       # the graph: steps, routing, and the pause for human review
+langchain-text-splitters        # cuts markdown into chunks at headings and paragraphs
+numpy                           # maths for the topic check's similarity scores
+python-dotenv                   # reads keys and endpoints from the .env file
+
+# --- monitoring (Application Insights; does nothing unless its connection string is set) ---
+azure-monitor-opentelemetry             # NEW: sends requests, steps and Azure calls to Application Insights
+opentelemetry-instrumentation-httpx     # NEW: records Azure OpenAI calls (the openai library uses httpx)
+
+# --- tests ---
+pytest                          # runs the offline tests in tests/

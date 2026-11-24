@@ -1,0 +1,34 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	input_guardrail(input_guardrail)
+	route(route)
+	retrieve(retrieve)
+	rerank(rerank)
+	grade(grade)
+	generate(generate)
+	output_guardrail(output_guardrail)
+	human_review(human_review<hr/><small><em>__interrupt = before</em></small>)
+	finalise(finalise)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> input_guardrail;
+	generate --> output_guardrail;
+	grade -.-> generate;
+	grade -. &nbsp;retry&nbsp; .-> retrieve;
+	input_guardrail -. &nbsp;blocked&nbsp; .-> __end__;
+	input_guardrail -. &nbsp;allowed&nbsp; .-> route;
+	output_guardrail -. &nbsp;grounded&nbsp; .-> finalise;
+	output_guardrail -. &nbsp;needs_review&nbsp; .-> human_review;
+	rerank --> grade;
+	retrieve --> rerank;
+	route --> retrieve;
+	finalise --> __end__;
+	human_review --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
+

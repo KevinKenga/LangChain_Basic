@@ -1,0 +1,14 @@
+.env
+pdfs/
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+
+# Azure Functions: local.settings.json holds real keys on your laptop.
+# function_app/local.settings.json.example is the placeholder version to copy.
+local.settings.json
+
+# Assignment rule: no PDFs committed
+data/raw/*.pdf
+data/processed/
