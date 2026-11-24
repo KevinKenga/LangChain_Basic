@@ -1,0 +1,25 @@
+# Function App dependencies -- the project's runtime packages plus the Functions SDK.
+# Copied from ../requirements.txt, without pytest: tests never run on Azure.
+# azure_setup/deploy-function.sh installs it on this Mac, for Linux, and ships
+# the result inside the zip (the remote build is switched off).
+
+# --- Azure Functions ---
+azure-functions                 # the decorators and request/response types in function_app.py
+
+# --- Azure services ---
+openai                          # includes AzureOpenAI, the client for Azure OpenAI
+azure-search-documents          # Azure AI Search: create the index, upload chunks, search
+azure-storage-blob              # Azure Blob Storage: download the PDF, upload markdown and answers
+
+# --- pipeline ---
+pymupdf4llm==0.0.24                  # PDF -> markdown, free and local (replaces Document Intelligence).
+                                     # Pinned on purpose: without the pin pip picks 2.0, an empty
+                                     # placeholder with no code in it, and the import fails.
+langgraph                       # the graph: steps, routing, and the pause for human review
+langchain-text-splitters        # cuts markdown into chunks at headings and paragraphs
+numpy                           # maths for the topic check's similarity scores
+python-dotenv                   # reads keys and endpoints from the .env file
+
+# --- monitoring (Application Insights; does nothing unless its connection string is set) ---
+azure-monitor-opentelemetry             # sends requests, steps and Azure calls to Application Insights
+opentelemetry-instrumentation-httpx     # records Azure OpenAI calls (the openai library uses httpx)

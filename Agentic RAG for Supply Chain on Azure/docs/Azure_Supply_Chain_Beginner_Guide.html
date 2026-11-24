@@ -1,0 +1,1231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Azure Supply Chain RAG - A Beginner's Guide</title>
+<style>
+  body { background:#ffffff; color:#1a1a1a; font-family:Helvetica, Arial, sans-serif; font-size:18px; line-height:1.6; max-width:800px; margin:0 auto; padding:24px 18px 60px 18px; }
+  h1 { font-size:30px; line-height:1.25; margin:0 0 6px 0; }
+  h2 { font-size:24px; margin:38px 0 10px 0; border-bottom:3px solid #1f6feb; padding-bottom:6px; }
+  h3 { font-size:20px; margin:26px 0 8px 0; }
+  p { margin:10px 0; }
+  ul, ol { margin:10px 0 10px 0; padding-left:26px; }
+  li { margin:6px 0; }
+  table { border-collapse:collapse; width:100%; margin:14px 0 18px 0; font-size:16px; }
+  th { background:#eeeeee; border:1px solid #999999; padding:8px; text-align:left; }
+  td { border:1px solid #999999; padding:8px; vertical-align:top; }
+  code { background:#f2f2f2; padding:1px 4px; font-family:Menlo, Consolas, monospace; font-size:15px; }
+  hr { border:0; border-top:2px solid #dddddd; margin:34px 0; }
+</style>
+</head>
+<body>
+
+<h1>Azure Supply Chain RAG<br>A Beginner's Guide, Step by Step</h1>
+<p style="font-size:16px; color:#555555; margin-top:0;">For macOS, using Terminal and bash. Every command is written out in full, with what it does, what you should see, and what to do if it fails.</p>
+
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">How to read the green and red lines:</strong> after every step there is a green line and a red line. Green means the step worked, and it tells you exactly where to go next. Red means the step failed, and it tells you which fix to use and which section to read.</p>
+
+<p style="background:#fff8d6; border-left:8px solid #e0b400; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>Please read this first.</strong> Steps 1-6 have been run successfully on the user's machine (resource group, OpenAI + gpt-5.1 + embeddings, AI Search in centralus, storage + container, .env, 5 PDFs uploaded, index built with 59/59 chunks). The cloud agent is now <strong>confirmed on our run</strong>: three POST calls to <code>/api/run</code> returned <code>HTTP 200</code> with JSON, and the router planned each one correctly - a two-year comparison, a risk lookup and a policy lookup - while an off-topic question got the polite refusal. Application Insights is confirmed too: after that traffic the Application Map filled in the portal. Azure AI Search is confirmed as well: Search explorer on the <code>supply-chain</code> index shows the converted markdown chunks in the <code>text</code> field, 59 of them. Still <strong>not yet confirmed</strong>: the blob trigger with a freshly uploaded PDF, the local web UI, and teardown. If a command fails, copy the full error and ask for help.</p>
+
+<hr>
+
+<h2>What actually happened to us (real mistakes and fixes)</h2>
+
+<p>This guide was written first and then run for real. Fifteen things went wrong on the way. None of them was the user's fault, and all of them are already fixed in the steps below. They are listed here so that you recognise them if they happen to you.</p>
+
+<table>
+  <tr><th style="width:38%;">What went wrong</th><th>What fixed it</th></tr>
+  <tr><td>Homebrew refused to install the Azure CLI on an Intel Mac (<code>directories are not writable: /usr/local/libexec</code>).</td><td>Skip Homebrew. Install the CLI with <code>pip</code> into its own private Python environment (Section 1, Step 2).</td></tr>
+  <tr><td>The PATH line was put in <code>~/.zshrc</code>, but the Terminal is bash, so <code>az</code> was never found.</td><td>Put the line in <code>~/.bash_profile</code> instead. Look at your prompt to see which shell you have (Section 1, Step 2).</td></tr>
+  <tr><td>The CLI folder was put at the <em>front</em> of PATH, so its <code>python</code> and <code>pip</code> took over and <code>pip install -r requirements.txt</code> tried to compile pymupdf and failed. Later, <code>No module named dotenv</code>.</td><td>Put the CLI folder at the <em>end</em> of PATH, and activate the project venv first (Section 1, Step 2 and Section 2).</td></tr>
+  <tr><td><code>gpt-4o-mini</code> could not be deployed: <code>ServiceModelDeprecating</code>. <code>gpt-4o</code> is marked Legacy.</td><td>Deploy one model, <code>gpt-5.1</code>, and use it for answers, router, grader and guardrail (Section 3 and Section 4).</td></tr>
+  <tr><td>AI Search would not create in eastus2: <code>InsufficientResourcesAvailable</code>, the region was out of capacity.</td><td>Create Search in <code>centralus</code> instead. It may sit in a different region from OpenAI (Section 4).</td></tr>
+  <tr><td>Pasting the printed block into <code>.env</code> by hand left two values empty, and the code stopped with <code>RuntimeError: These settings are missing from .env</code>.</td><td>Let <code>azure_setup/fill-env.sh</code> fetch the keys from Azure and write them in, without printing them (Section 5).</td></tr>
+  <tr><td>A check like <code>sed 's/=.*/=&lt;set&gt;/'</code> showed <code>&lt;set&gt;</code> even for the empty lines, so the empty values looked fine.</td><td>Use the script's own <code>filled</code> / <code>EMPTY</code> list, or the <code>awk</code> check in Section 5.</td></tr>
+  <tr><td><code>set -a; source .env</code> cut the storage connection string at its first <code>;</code>, so the app saw half a connection string.</td><td>Load <code>.env</code> with the line-by-line loop in Section 8 Step 2. Never <code>source .env</code>.</td></tr>
+  <tr><td>The function list was empty and <code>curl</code> returned nothing at all - not even an error.</td><td>Azure's remote build had not installed the Python packages. The new <code>deploy-function.sh</code> installs the Linux packages on the Mac and bundles them in the zip, with the remote build switched off. The success test is the <code>curl</code> HTTP status, never the function list.</td></tr>
+  <tr><td><code>az functionapp deploy ... --type zip</code> said <code>This API isn't available in this environment yet!</code></td><td>Use <code>az functionapp deployment source config-zip</code> instead - that is what <code>deploy-function.sh</code> runs.</td></tr>
+  <tr><td><code>az webapp log tail</code> returned <code>404</code> on <code>/logstream</code>.</td><td>Not an error in your app: the log stream is not available on Linux Consumption. Use Application Insights instead (Section 8 Step 7).</td></tr>
+  <tr><td><code>pip</code> installed <code>pymupdf4llm 2.0</code>, an empty placeholder with no code in it.</td><td><code>function_app/requirements.txt</code> pins <code>pymupdf4llm==0.0.24</code>.</td></tr>
+  <tr><td>Pressing <strong>Ctrl+C</strong> during the upload cancelled the deployment.</td><td>Wait. The zip is about 90 MB and the upload takes 3 to 5 minutes.</td></tr>
+  <tr><td>A Terminal stuck in <code>az webapp log tail</code>, and <code>wq:</code> typed into it.</td><td>Press <strong>Ctrl+C</strong>. <code>wq:</code> is a vim habit, not a command.</td></tr>
+  <tr><td><code>az</code> refused to install the <code>application-insights</code> extension because it is in preview.</td><td>Run <code>az config set extension.dynamic_install_allow_preview=true</code>, then answer <code>Y</code>.</td></tr>
+</table>
+
+<hr>
+
+<h2>0. Welcome - what you will build</h2>
+
+<p>You are going to put a small "question and answer" system into the cloud. You give it PDF reports about a supply chain. It reads them, stores them in a searchable form, and then answers questions about them in plain English.</p>
+
+<p>You do not need to know anything about Azure to start. Every term is explained the first time it appears, and there is a small dictionary just below.</p>
+
+<p><strong>What you end up with:</strong></p>
+<ul>
+  <li>A folder in Azure (called a <em>resource group</em>) that holds everything.</li>
+  <li>A place to drop PDF files.</li>
+  <li>A search index built from those PDFs.</li>
+  <li>A small program (a <em>Function</em>) that wakes up by itself when a new PDF arrives, reads it, and writes an answer.</li>
+  <li>Three ways to ask a question by hand.</li>
+  <li>One command that deletes everything and stops the bill.</li>
+</ul>
+
+<h3>Drawing 1 - The big picture</h3>
+
+<svg viewBox="0 0 780 300" width="100%" style="max-width:780px; height:auto; display:block; margin:0 auto;" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="The big picture: you upload a PDF, it lands in the supply-chain-docs container, an Azure Function processes it, and writes markdown, a search index and an answer">
+  <defs>
+    <marker id="a1" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"></path>
+    </marker>
+  </defs>
+  <rect x="20" y="30" width="150" height="70" rx="6" fill="#dbeafe" stroke="#1f6feb" stroke-width="2"></rect>
+  <text x="95" y="60" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="bold" fill="#123a75">You</text>
+  <text x="95" y="80" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#123a75">a PDF on your Mac</text>
+
+  <line x1="172" y1="65" x2="224" y2="65" stroke="#334155" stroke-width="2" marker-end="url(#a1)"></line>
+
+  <rect x="230" y="30" width="190" height="70" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="2"></rect>
+  <text x="325" y="60" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#14532d">supply-chain-docs</text>
+  <text x="325" y="80" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#14532d">Blob container (the PDFs)</text>
+
+  <line x1="422" y1="65" x2="464" y2="65" stroke="#334155" stroke-width="2" marker-end="url(#a1)"></line>
+
+  <rect x="470" y="30" width="180" height="70" rx="6" fill="#ffedd5" stroke="#ea580c" stroke-width="2"></rect>
+  <text x="560" y="60" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="bold" fill="#7c2d12">Azure Function</text>
+  <text x="560" y="80" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#7c2d12">runs the pipeline</text>
+
+  <line x1="560" y1="102" x2="560" y2="150" stroke="#334155" stroke-width="2"></line>
+  <line x1="130" y1="150" x2="630" y2="150" stroke="#334155" stroke-width="2"></line>
+  <line x1="130" y1="150" x2="130" y2="180" stroke="#334155" stroke-width="2" marker-end="url(#a1)"></line>
+  <line x1="390" y1="150" x2="390" y2="180" stroke="#334155" stroke-width="2" marker-end="url(#a1)"></line>
+  <line x1="630" y1="150" x2="630" y2="180" stroke="#334155" stroke-width="2" marker-end="url(#a1)"></line>
+
+  <rect x="20" y="185" width="220" height="85" rx="6" fill="#ede9fe" stroke="#7c3aed" stroke-width="2"></rect>
+  <text x="130" y="215" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#4c1d95">supply-chain-markdown</text>
+  <text x="130" y="236" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#4c1d95">the PDF turned into text</text>
+
+  <rect x="280" y="185" width="220" height="85" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="2"></rect>
+  <text x="390" y="215" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#78350f">AI Search index</text>
+  <text x="390" y="236" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#78350f">named supply-chain</text>
+
+  <rect x="540" y="185" width="220" height="85" rx="6" fill="#dbeafe" stroke="#1f6feb" stroke-width="2"></rect>
+  <text x="650" y="215" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#123a75">supply-chain-results</text>
+  <text x="650" y="236" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#123a75">the agent's answer</text>
+</svg>
+<p style="font-size:14px; color:#444444; text-align:center; margin:6px 0 24px 0;"><em>Drawing 1 - The big picture. A PDF goes in on the left, the Function reads it, and three things come out on the right.</em></p>
+
+<h3>Drawing 2 - What lives inside Azure</h3>
+
+<svg viewBox="0 0 780 430" width="100%" style="max-width:780px; height:auto; display:block; margin:0 auto;" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="What lives inside Azure: one resource group holding Azure OpenAI, AI Search, a storage account with three containers, a Function App and an optional Web App">
+  <rect x="20" y="30" width="740" height="370" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="3"></rect>
+  <text x="42" y="60" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="bold" fill="#0f172a">rg-supply-chain-rag  -  one resource group, one folder holding everything</text>
+
+  <rect x="45" y="80" width="215" height="75" rx="6" fill="#dbeafe" stroke="#1f6feb" stroke-width="2"></rect>
+  <text x="152" y="110" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#123a75">Azure OpenAI</text>
+  <text x="152" y="130" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#123a75">aoai-supplychain-SUFFIX</text>
+
+  <rect x="282" y="80" width="215" height="75" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="2"></rect>
+  <text x="390" y="110" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#78350f">Azure AI Search</text>
+  <text x="390" y="130" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#78350f">srch-supplychain-SUFFIX</text>
+
+  <rect x="519" y="80" width="215" height="170" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="2"></rect>
+  <text x="626" y="105" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#14532d">Storage account</text>
+  <text x="626" y="122" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#14532d">stsupplychainSUFFIX</text>
+  <rect x="535" y="132" width="183" height="30" rx="4" fill="#ffffff" stroke="#16a34a" stroke-width="1"></rect>
+  <text x="626" y="152" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#14532d">supply-chain-docs</text>
+  <rect x="535" y="168" width="183" height="30" rx="4" fill="#ffffff" stroke="#16a34a" stroke-width="1"></rect>
+  <text x="626" y="188" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#14532d">supply-chain-markdown</text>
+  <rect x="535" y="204" width="183" height="30" rx="4" fill="#ffffff" stroke="#16a34a" stroke-width="1"></rect>
+  <text x="626" y="224" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#14532d">supply-chain-results</text>
+
+  <rect x="45" y="270" width="215" height="75" rx="6" fill="#ffedd5" stroke="#ea580c" stroke-width="2"></rect>
+  <text x="152" y="300" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#7c2d12">Function App</text>
+  <text x="152" y="320" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#7c2d12">func-supplychain-SUFFIX</text>
+
+  <rect x="282" y="270" width="215" height="75" rx="6" fill="#f1f5f9" stroke="#64748b" stroke-width="2" stroke-dasharray="6 4"></rect>
+  <text x="390" y="300" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#334155">Web App (optional)</text>
+  <text x="390" y="320" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#334155">supplychain-web-SUFFIX</text>
+
+  <text x="519" y="300" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#334155">teardown.sh deletes this</text>
+  <text x="519" y="320" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#334155">whole box in one go.</text>
+</svg>
+<p style="font-size:14px; color:#444444; text-align:center; margin:6px 0 24px 0;"><em>Drawing 2 - What lives inside Azure. Everything sits inside the one resource group, so one delete removes it all.</em></p>
+
+<h3>Words you will see</h3>
+
+<table>
+  <tr><th style="width:26%;">Word</th><th>What it means in plain English</th></tr>
+  <tr><td><strong>Terminal</strong></td><td>The black window on your Mac where you type commands instead of clicking. It is already installed.</td></tr>
+  <tr><td><strong>Folder path</strong></td><td>The full address of a folder, like <code>/Users/msp/Desktop/...</code>. It is written with slashes, not colons.</td></tr>
+  <tr><td><strong>Azure</strong></td><td>Microsoft's cloud. Rented computers and services that you reach over the internet.</td></tr>
+  <tr><td><strong>Subscription</strong></td><td>Your Azure account's billing container. Everything you create is charged to one subscription.</td></tr>
+  <tr><td><strong>Resource group</strong></td><td>A folder inside Azure that holds related services. Delete the folder, and everything inside it is deleted.</td></tr>
+  <tr><td><strong>Blob Storage</strong></td><td>Azure's place for files ("blobs"). Like a giant online hard drive.</td></tr>
+  <tr><td><strong>Container</strong></td><td>A folder inside Blob Storage. Ours are <code>supply-chain-docs</code>, <code>supply-chain-markdown</code> and <code>supply-chain-results</code>.</td></tr>
+  <tr><td><strong>Index</strong></td><td>A searchable list built from your documents. It lets the system find the right paragraph instead of re-reading every PDF.</td></tr>
+  <tr><td><strong>AI Search</strong></td><td>The Azure service that stores and searches that index.</td></tr>
+  <tr><td><strong>OpenAI deployment</strong></td><td>A model (such as <code>gpt-5.1</code>) that you have switched on inside your Azure OpenAI resource, under a name you choose. You call the name, not the model.</td></tr>
+  <tr><td><strong>Function</strong></td><td>A small piece of your code that Azure runs for you, only when something happens. No server to keep awake.</td></tr>
+  <tr><td><strong>Trigger</strong></td><td>The "something happens" part. Ours fires when a new file lands in a container.</td></tr>
+  <tr><td><strong>.env</strong></td><td>A plain text file of settings and secret keys that your code reads at start-up. It stays on your Mac and is never committed.</td></tr>
+  <tr><td><strong>API key</strong></td><td>A long password that lets a program use a service. Anyone with the key can spend your money.</td></tr>
+  <tr><td><strong>venv</strong></td><td>A private Python environment: a folder holding this project's packages, so they do not clash with other projects.</td></tr>
+  <tr><td><strong>SUFFIX</strong></td><td>A number you pick, added to names that must be unique across the whole world.</td></tr>
+  <tr><td><strong>Endpoint</strong></td><td>The web address of a service, like <code>https://srch-supplychain-12345.search.windows.net</code>.</td></tr>
+  <tr><td><strong>Connection string</strong></td><td>One long line that contains a storage account's name and its key. Treat it like a password.</td></tr>
+  <tr><td><strong>CLI</strong></td><td>Command Line Interface: the <code>az</code> program that lets you drive Azure by typing.</td></tr>
+</table>
+
+<p style="background:#e8f1ff; border-left:8px solid #1f6feb; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>Two habits that save beginners hours.</strong> (1) A line that starts with <code>#</code> is a note, not a command - do not paste it. (2) The folder path in this project contains spaces and an <code>&amp;</code>, so the quotes around it matter. Always keep the quotes.</p>
+
+<hr>
+
+<h2>1. Before you start</h2>
+
+<p>You need four things: an Azure account, the Azure command line tool, a Python environment, and the <code>zip</code> tool. This section checks all four.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 1 - Have an Azure account</p>
+<p>Open <strong>https://portal.azure.com</strong> in your browser and sign in. That page is called <em>the portal</em> - it is the clickable version of Azure. If you have no account, create a free one from that page first. You do not need to click anything else yet.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> You are signed in to the portal. Go on to Step 2 and install the Azure command line tool.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 2 - Install the Azure command line tool</p>
+<p><strong>What this does:</strong> installs <code>az</code>, the program that lets you create Azure services by typing instead of clicking. We do <strong>not</strong> use Homebrew for this: on an Intel Mac Homebrew now refuses to install it (the error mentions <code>directories are not writable: /usr/local/libexec</code>). Instead we give the CLI its own private Python environment, which cannot disturb anything else.</p>
+<p><strong>First, find out which shell your Terminal uses.</strong> Look at the prompt, the text just before where you type. If it ends with <code>bash</code> or <code>bash-3.2$</code>, you have bash. If it ends with <code>zsh</code> or <code>%</code>, you have zsh. On this Mac it is bash, so the file we edit below is <code>~/.bash_profile</code>. If yours says zsh, use <code>~/.zshrc</code> in the same commands.</p>
+<p><strong>What this does:</strong> creates a private Python environment for the CLI in your home folder.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">python3.11 -m venv "$HOME/azure-cli-venv"</pre>
+<p><strong>You should see:</strong> nothing at all. A folder called <code>azure-cli-venv</code> appears in your home folder.</p>
+<p><strong>If it fails:</strong> <code>python3.11: command not found</code> means Python 3.11 is not on your PATH. Use the full path instead: <code>/Users/msp/anaconda3/bin/python3.11 -m venv "$HOME/azure-cli-venv"</code>. Any working Python 3.11 is fine here.</p>
+<p><strong>What this does:</strong> installs the Azure CLI into that environment. This takes several minutes; let it finish.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">"$HOME/azure-cli-venv/bin/pip" install azure-cli</pre>
+<p><strong>You should see:</strong> a lot of download lines, ending with <code>Successfully installed ... azure-cli-2.x.x ...</code>.</p>
+<p><strong>If it fails:</strong> a network timeout is worth one retry. Any other error: copy the last ten lines and ask for help.</p>
+<p><strong>What this does:</strong> adds the CLI folder to your PATH, so the word <code>az</code> works in every new Terminal window. Note the order: the folder goes at the <strong>end</strong> (<code>$PATH:</code>), never at the front. At the front, the CLI's own <code>python</code> and <code>pip</code> would take over, and then <code>pip install -r requirements.txt</code> tries to compile pymupdf and fails.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">echo 'export PATH="$PATH:$HOME/azure-cli-venv/bin"' &gt;&gt; ~/.bash_profile
+export PATH="$PATH:$HOME/azure-cli-venv/bin"</pre>
+<p><strong>You should see:</strong> nothing. The first line writes the setting into <code>~/.bash_profile</code> so it is applied in every new window; the second line applies it to the window you are in right now.</p>
+<p><strong>If it fails:</strong> if you use zsh, replace <code>~/.bash_profile</code> with <code>~/.zshrc</code>. If you are not sure, run <code>echo $SHELL</code>: it prints <code>/bin/bash</code> or <code>/bin/zsh</code>.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The CLI is installed and its folder is on your PATH. Go on to Step 3 and check that <code>az</code> answers.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Use the <strong>If it fails</strong> line above for the command that failed. If <code>az</code> is still not found after a new Terminal window, go to the Section 12 table, row <code>az: command not found</code>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 3 - Check that the tool answers</p>
+<p><strong>What this does:</strong> asks <code>az</code> to print its own version, which proves the install worked.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az version</pre>
+<p><strong>You should see:</strong> a small block of JSON with <code>"azure-cli"</code> and <code>"azure-cli-core"</code> version numbers.</p>
+<p><strong>If it fails:</strong> <code>az: command not found</code> means this window has not loaded the PATH line yet. Run <code>export PATH="$PATH:$HOME/azure-cli-venv/bin"</code> again and retry. If it still fails, open a new Terminal window and run it there; the line in <code>~/.bash_profile</code> is only read when a window starts.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> <code>az</code> answers with its version numbers. Go on to Step 4 and check the Python environment.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Run the <strong>If it fails</strong> line above: re-export the PATH line, then open a new Terminal window and retry. Still failing: Section 12 table, row <code>az: command not found</code>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 4 - Check the Python environment</p>
+<p>The project uses a <em>venv</em> (a private Python environment) that lives one folder <strong>above</strong> the project, at <code>LangChain_Basic/.venv</code>. That is why the path below starts with <code>../</code>, which means "go up one folder".</p>
+<p><strong>What this does:</strong> asks whether that environment's Python exists.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">ls ../.venv/bin/python</pre>
+<p><strong>You should see:</strong> the path printed back, for example <code>../.venv/bin/python</code>.</p>
+<p><strong>If it fails:</strong> a "No such file" message means the environment does not exist yet. Create it once with the next command. This command must be run from inside the project folder, which Section 2 sets up - so if you are not there yet, do Section 2 first and come back.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">python3.11 -m venv ../.venv</pre>
+<p><strong>You should see:</strong> nothing at all. A <code>.venv</code> folder appears next to the project folder.</p>
+<p><strong>If it fails:</strong> <code>python3.11: command not found</code> means Python 3.11 is missing. Install it from <strong>https://www.python.org/downloads/</strong>, then run the command again.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The environment's Python is there. Go on to Step 5 and check the zip tool.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Use the two <strong>If it fails</strong> lines above: create the environment with <code>python3.11 -m venv ../.venv</code>, or install Python 3.11 first. Still failing: Section 12 table, row <code>No module named dotenv</code>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 5 - Check the zip tool</p>
+<p><strong>What this does:</strong> the deployment scripts pack your code into a zip file, so they need <code>zip</code>. This prints its version.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">zip --version | head -2</pre>
+<p><strong>You should see:</strong> a copyright line and a version line such as <code>This is Zip 3.0</code>.</p>
+<p><strong>If it fails:</strong> macOS ships <code>zip</code>, so a failure usually means the command was mistyped. Copy it again exactly, including the vertical bar.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> <code>zip</code> prints its version. Go on to Step 6 and sign in to Azure.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Retype the command exactly as above, including the vertical bar, as the <strong>If it fails</strong> line says. Still failing: Section 12 table.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 6 - Sign in to Azure</p>
+<p><strong>What this does:</strong> opens your browser so you can sign in, then stores a login token on your Mac. You do this once; it lasts for weeks.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az login</pre>
+<p><strong>You should see:</strong> a browser window asking you to pick an account. After you sign in, Terminal prints a JSON list of your subscriptions, then asks <code>Select a subscription and tenant (Type a number or Enter for no changes)</code>. Just press <strong>Return</strong> to keep the default - that is the subscription the guide was run with, and it is fine.</p>
+<p><strong>If it fails:</strong> if no browser opens, copy the URL that Terminal prints into your browser by hand. If it says the login expired later on, just run <code>az login</code> again.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> You are signed in. Go on to Step 7 and check which subscription is billed.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Copy the URL Terminal prints into your browser by hand, as the <strong>If it fails</strong> line says. Still failing: Section 12 table, row <code>Please run 'az login' to setup account.</code></p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 7 - Check which subscription you are using</p>
+<p><strong>What this does:</strong> prints the name of the subscription that will be billed. If you have more than one, this tells you which one is active.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az account show --query name -o tsv</pre>
+<p><strong>You should see:</strong> one line with your subscription's name, for example <code>Data Engineering Suscription</code>. That is the subscription this guide was run with; yours may be named differently.</p>
+<p><strong>If it fails:</strong> <code>Please run 'az login' to setup account.</code> means Step 6 did not complete. Run <code>az login</code> again.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> One subscription name is printed. Go on to Step 8 and register the service families.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Run <code>az login</code> again as the <strong>If it fails</strong> line says, then repeat this step. Still failing: Section 12 table, row <code>Please run 'az login' to setup account.</code></p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 8 - Register the service families</p>
+<p>A brand new subscription has to be told about each family of services once. This is called <em>registering a provider</em>. It takes about a minute per family and only needs doing once per subscription.</p>
+<p><strong>What this does:</strong> registers the five service families this project uses. Run all five lines.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az provider register --namespace Microsoft.CognitiveServices
+az provider register --namespace Microsoft.Search
+az provider register --namespace Microsoft.Storage
+az provider register --namespace Microsoft.Web
+az provider register --namespace Microsoft.Insights</pre>
+<p><strong>You should see:</strong> the first time, each command prints <code>Registering is still on-going. You can monitor the status using 'az provider show -n &lt;namespace&gt;'</code>. That message is normal, not an error.</p>
+<p><strong>If it fails:</strong> "already registered" is fine - nothing to do. Any other error usually means you are not signed in; run <code>az login</code>.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The five families are registering. Go on to Step 9 and check that one of them finished.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Run <code>az login</code> as the <strong>If it fails</strong> line says, then run the five lines again. Still failing: Section 12 table.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 9 - Check that one of them finished</p>
+<p><strong>What this does:</strong> asks for the registration state of one family, so you know the wait is over.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az provider show --namespace Microsoft.Web --query registrationState -o tsv</pre>
+<p><strong>You should see:</strong> <code>Registered</code>.</p>
+<p><strong>If it fails:</strong> if it prints <code>Registering</code>, nothing is wrong - wait a minute and run it again.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Section 1 is done. Go to Section 2.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Wait a minute and run the command again, as the <strong>If it fails</strong> line says. Still saying <code>Registering</code> after ten minutes: Section 12 table.</p>
+
+<hr>
+
+<h2>2. Open Terminal and go to the project folder</h2>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 1 - Open Terminal</p>
+<p>Press <strong>Cmd + Space</strong> on your keyboard. A search box appears. Type <strong>Terminal</strong> and press <strong>Return</strong>. A window with a text prompt opens. That window is Terminal.</p>
+<p>From now on, "run this" means: copy the command, paste it into Terminal, press Return, and wait for the prompt to come back.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Terminal is open. Go on to Step 2 and move into the project folder.</p>
+
+<p style="background:#e8f1ff; border-left:8px solid #1f6feb; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>Every time you open a new Terminal window, run these four lines first.</strong> A new window forgets everything: which folder you were in, which Python environment was on, and which number you chose. This is the single most common cause of confusing errors later.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">cd "/Users/msp/Desktop/TTU ONE DRIVE Copy/Bootcamps/AI&amp;ML/Sep 27 Batch HandsOn/LangChain_Basic/Agentic RAG for Supply Chain on Azure"
+source ../.venv/bin/activate
+export PATH="$PATH:$HOME/azure-cli-venv/bin"
+export SUFFIX=12345</pre>
+<p><strong>You should see:</strong> after the second line your prompt starts with <code>(.venv)</code>. The other three print nothing.</p>
+<p><strong>If it fails:</strong> <code>az: command not found</code> means the third line was skipped. <code>No module named dotenv</code> or a pymupdf build error means the second line was skipped, or the CLI folder was put at the front of PATH instead of the end. Use your own <code>SUFFIX</code> in the last line, the same number you used when you created the resources.</p>
+
+<h3>Drawing 4 - Folder map</h3>
+
+<svg viewBox="0 0 780 360" width="100%" style="max-width:780px; height:auto; display:block; margin:0 auto;" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Folder map: LangChain_Basic contains the .venv folder and the project folder, which contains docs, azure_setup, data/raw, ingestion, function_app and .env">
+  <rect x="20" y="30" width="740" height="300" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="3"></rect>
+  <text x="42" y="58" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="bold" fill="#0f172a">LangChain_Basic  -  the folder you start in</text>
+
+  <rect x="45" y="80" width="200" height="55" rx="6" fill="#ede9fe" stroke="#7c3aed" stroke-width="2"></rect>
+  <text x="145" y="105" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#4c1d95">.venv</text>
+  <text x="145" y="124" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#4c1d95">the Python environment</text>
+
+  <rect x="280" y="80" width="455" height="230" rx="6" fill="#ffffff" stroke="#1f6feb" stroke-width="2"></rect>
+  <text x="507" y="105" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#123a75">Agentic RAG for Supply Chain on Azure</text>
+
+  <rect x="300" y="122" width="130" height="38" rx="4" fill="#f1f5f9" stroke="#64748b" stroke-width="1"></rect>
+  <text x="365" y="146" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#334155">docs/</text>
+  <rect x="445" y="122" width="130" height="38" rx="4" fill="#f1f5f9" stroke="#64748b" stroke-width="1"></rect>
+  <text x="510" y="146" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#334155">azure_setup/</text>
+  <rect x="590" y="122" width="130" height="38" rx="4" fill="#f1f5f9" stroke="#64748b" stroke-width="1"></rect>
+  <text x="655" y="146" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#334155">data/raw/</text>
+
+  <rect x="300" y="172" width="130" height="38" rx="4" fill="#f1f5f9" stroke="#64748b" stroke-width="1"></rect>
+  <text x="365" y="196" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#334155">ingestion/</text>
+  <rect x="445" y="172" width="130" height="38" rx="4" fill="#f1f5f9" stroke="#64748b" stroke-width="1"></rect>
+  <text x="510" y="196" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#334155">function_app/</text>
+  <rect x="590" y="172" width="130" height="38" rx="4" fill="#fdecec" stroke="#c62828" stroke-width="2"></rect>
+  <text x="655" y="196" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#7f1d1d">.env</text>
+
+  <text x="300" y="245" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#334155">You cd into the blue box.</text>
+  <text x="300" y="265" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#334155">.venv sits one level up, so you reach it</text>
+  <text x="300" y="285" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#334155">with ../.venv</text>
+</svg>
+<p style="font-size:14px; color:#444444; text-align:center; margin:6px 0 24px 0;"><em>Drawing 4 - Folder map. The blue box is where every command in this guide is run from.</em></p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 2 - Go to the project folder</p>
+<p><strong>What this does:</strong> moves Terminal into the project folder, so every later command finds its files. <code>cd</code> means "change directory".</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">cd "/Users/msp/Desktop/TTU ONE DRIVE Copy/Bootcamps/AI&amp;ML/Sep 27 Batch HandsOn/LangChain_Basic/Agentic RAG for Supply Chain on Azure"</pre>
+<p><strong>You should see:</strong> nothing at all. The prompt comes back. If you now type <code>pwd</code> and press Return, it prints that same folder path.</p>
+<p><strong>If it fails:</strong> <code>No such file or directory</code> almost always means a missing or curly quote, or a space that lost its quoting. Copy the whole line again, quotes included. You can also drag the folder from Finder into Terminal after typing <code>cd </code> and a space - macOS fills in the path for you.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> You are in the project folder. Go on to Step 3 and switch on the Python environment.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Recopy the whole line with its quotes, or drag the folder from Finder, as the <strong>If it fails</strong> line says. Still failing: Section 12 table.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 3 - Switch on the Python environment</p>
+<p><strong>What this does:</strong> activates the <em>venv</em>, so <code>python</code> and <code>pip</code> use this project's packages instead of your Mac's system ones.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">source ../.venv/bin/activate</pre>
+<p><strong>You should see:</strong> no output, but your prompt now starts with <code>(.venv)</code>. That prefix is how you know it worked.</p>
+<p><strong>If it fails:</strong> "No such file" means the environment is missing - go back to Step 4 of Section 1 and create it. A new Terminal window forgets this, so run it again in every new window.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Your prompt starts with <code>(.venv)</code>. Go on to Step 4 and install the Python packages.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Create the environment with Section 1 Step 4 as the <strong>If it fails</strong> line says, then run this step again. Still failing: Section 12 table, row <code>No module named dotenv</code>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 4 - Install the Python packages</p>
+<p><strong>What this does:</strong> reads <code>requirements.txt</code> and installs every package the project needs, including the Azure SDKs.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">pip install -r requirements.txt</pre>
+<p><strong>You should see:</strong> a lot of download lines, ending with <code>Successfully installed ...</code> that lists the Azure SDKs, <code>langgraph</code>, <code>pymupdf4llm</code> and the rest.</p>
+<p><strong>If it fails:</strong> if <code>pip</code> is not found, the venv is not active - run Step 3 again. If a package fails to build, run the same command once more; the second attempt usually succeeds.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The packages are installed. Go on to Step 5 and run the offline tests.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Activate the venv again with Step 3 and re-run the command once, as the <strong>If it fails</strong> line says. Still failing: Section 12 table, row <code>No module named dotenv</code>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 5 - Run the offline tests</p>
+<p><strong>What this does:</strong> runs the project's test suite. The tests use fakes, so no Azure resource and no key is needed. It proves the code is healthy before you spend any money.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">python -m pytest -q</pre>
+<p><strong>You should see:</strong> a line such as <code>74 passed</code>. The number grows as tests are added; what matters is that nothing fails.</p>
+<p><strong>If it fails:</strong> <code>No module named pytest</code> means Step 4 did not finish. A single failing test is usually a missing package - re-run Step 4 and try again.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Section 2 is done. Go to Section 3.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Re-run Step 4 as the <strong>If it fails</strong> line says, then run the tests again. Still failing: Section 12 table.</p>
+
+<hr>
+
+<h2>3. The names we will use</h2>
+
+<p>Every Azure resource has a fixed name, except for one number: <code>SUFFIX</code>. Some names must be unique across the whole world, because they become internet addresses. Think of <code>SUFFIX</code> as <strong>a lucky number so your names are unique</strong> - like adding your house number to a street name so the postman finds you and not your neighbour.</p>
+
+<p>If you do not choose one, <code>provision.sh</code> invents a random number. Choose your own instead, and write it down, because every later command reuses it.</p>
+
+<table>
+  <tr><th style="width:34%;">What</th><th style="width:40%;">Name</th><th>Made by</th></tr>
+  <tr><td>Resource group</td><td><code>rg-supply-chain-rag</code></td><td><code>provision.sh</code></td></tr>
+  <tr><td>Azure OpenAI resource</td><td><code>aoai-supplychain-&lt;SUFFIX&gt;</code></td><td><code>provision.sh</code></td></tr>
+  <tr><td>Deployment: answers</td><td><code>gpt-5.1</code></td><td><code>provision.sh</code></td></tr>
+  <tr><td>Deployment: guardrails</td><td><code>gpt-5.1</code></td><td><code>provision.sh</code></td></tr>
+  <tr><td>Deployment: router and grader</td><td><code>gpt-5.1</code></td><td><code>provision.sh</code></td></tr>
+  <tr><td>Deployment: embeddings</td><td><code>text-embedding-3-small</code></td><td><code>provision.sh</code></td></tr>
+  <tr><td>Azure AI Search service</td><td><code>srch-supplychain-&lt;SUFFIX&gt;</code></td><td><code>provision.sh</code></td></tr>
+  <tr><td>AI Search region</td><td><code>centralus</code></td><td><code>provision.sh</code> (<code>SEARCH_LOCATION</code>)</td></tr>
+  <tr><td>Search index</td><td><code>supply-chain</code></td><td><code>run_ingestion.py</code></td></tr>
+  <tr><td>Storage account</td><td><code>stsupplychain&lt;SUFFIX&gt;</code></td><td><code>provision.sh</code></td></tr>
+  <tr><td>Container: PDFs</td><td><code>supply-chain-docs</code></td><td><code>provision.sh</code></td></tr>
+  <tr><td>Container: markdown</td><td><code>supply-chain-markdown</code></td><td><code>provision-function.sh</code></td></tr>
+  <tr><td>Container: agent answers</td><td><code>supply-chain-results</code></td><td><code>provision-function.sh</code></td></tr>
+  <tr><td>Function app</td><td><code>func-supplychain-&lt;SUFFIX&gt;</code></td><td><code>provision-function.sh</code></td></tr>
+  <tr><td>App Service plan</td><td><code>plan-supplychain</code></td><td><code>hosting.md</code></td></tr>
+  <tr><td>Web app</td><td><code>supplychain-web-&lt;SUFFIX&gt;</code></td><td><code>hosting.md</code></td></tr>
+  <tr><td>Log Analytics workspace</td><td><code>log-supplychain</code></td><td><code>hosting.md</code></td></tr>
+  <tr><td>Application Insights</td><td><code>appi-supplychain</code></td><td><code>hosting.md</code></td></tr>
+</table>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 1 - Fix your names in this Terminal window</p>
+<p><strong>What this does:</strong> stores your number and the derived names in this Terminal window, so later commands can reuse them. <code>export</code> means "remember this for the rest of this window".</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">export SUFFIX=12345
+export LOCATION=eastus2
+export SEARCH_LOCATION=centralus
+export RG=rg-supply-chain-rag
+export OPENAI=aoai-supplychain-$SUFFIX
+export SEARCH=srch-supplychain-$SUFFIX
+export STORAGE=stsupplychain$SUFFIX
+export CONTAINER=supply-chain-docs
+echo "SUFFIX=$SUFFIX  &lt;- write this down"</pre>
+<p><strong>You should see:</strong> <code>SUFFIX=12345  &lt;- write this down</code>. Change 12345 to any number you like, but keep it the same everywhere. These are the same variable names <code>provision.sh</code> uses, so the commands in Section 4 are word for word what the script runs.</p>
+<p><strong>If it fails:</strong> nothing here can really fail. If the last line prints an empty SUFFIX, you skipped the first line - run all the lines together.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Section 3 is done. Go to Section 4.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Run all the lines together, as the <strong>If it fails</strong> line says. Still failing: Section 12 table.</p>
+
+<p style="background:#fff8d6; border-left:8px solid #e0b400; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>A new Terminal window forgets these.</strong> If you close the window, run all the <code>export</code> lines again with the same number before you continue.</p>
+
+<hr>
+
+<h2>4. Create everything in Azure</h2>
+
+<h3>4a. The easy way - one command</h3>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 1 - Create all the resources at once</p>
+<p><strong>What this does:</strong> runs <code>azure_setup/provision.sh</code>, which creates the resource group, Azure OpenAI with two model deployments (<code>gpt-5.1</code> and <code>text-embedding-3-small</code>), the AI Search service, the storage account and the PDF container. It takes about ten minutes.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">SUFFIX=$SUFFIX bash azure_setup/provision.sh</pre>
+<p><strong>You should see:</strong> a few <code>Creating ...</code> lines, then a block headed <code>Done. Paste these lines into .env</code> containing the endpoint, the two keys and the connection string. Keep that block - Section 5 uses it as a fallback.</p>
+<p><strong>If it fails:</strong> the most common error is <code>The name ... is already taken</code>. Pick a different <code>SUFFIX</code>, run the <code>export</code> lines again, and re-run this command. If it stops half-way, use 4b below to finish the missing pieces one at a time.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Skip all of Section 4b and go straight to Section 5.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Pick a new <code>SUFFIX</code> and re-run, as the <strong>If it fails</strong> line says; if it stopped half-way, go to Section 4b and finish the missing pieces one at a time. Still failing: Section 12 table.</p>
+
+<p style="background:#e8f1ff; border-left:8px solid #1f6feb; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>Two things worth knowing before you run it.</strong> (1) Re-running the script is safe: it does not duplicate anything, and resources that already exist are left as they are. (2) The search service is created in <code>centralus</code>, not in <code>eastus2</code>, because eastus2 was out of capacity for AI Search. Mixing regions is fine - the search service and the OpenAI resource do not have to sit together.</p>
+
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>From this moment on, Azure is charging you.</strong> It is a small amount per hour, but it runs until you do Section 11. Do not stop half-way and forget.</p>
+
+<h3>4b. If you want to learn - the same thing one piece at a time</h3>
+
+<p>Use this if you want to see what each step does, or if the script stopped half-way. Each command is exactly what the script runs.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 1 - Create the resource group</p>
+<p><strong>What this does:</strong> creates the folder that will hold everything. It is also the one thing <code>teardown.sh</code> deletes.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az group create --name "$RG" --location "$LOCATION" --output none</pre>
+<p><strong>You should see:</strong> nothing. To confirm it exists, run <code>az group exists --name "$RG"</code>, which prints <code>true</code>.</p>
+<p><strong>If it fails:</strong> <code>Please run 'az login'</code> means your session expired - run <code>az login</code> and retry.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The resource group exists. Go on to Step 2 and create Azure OpenAI.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Run <code>az login</code> as the <strong>If it fails</strong> line says and repeat this step. Still failing: Section 12 table, row <code>Please run 'az login' to setup account.</code></p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 2 - Create Azure OpenAI</p>
+<p><strong>What this does:</strong> creates the resource that hosts the language models. The <code>--custom-domain</code> gives it its own endpoint address.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az cognitiveservices account create --name "$OPENAI" --resource-group "$RG" \
+  --location "$LOCATION" --kind OpenAI --sku S0 \
+  --custom-domain "$OPENAI" --output none</pre>
+<p><strong>You should see:</strong> nothing, after a minute or two.</p>
+<p><strong>If it fails:</strong> <code>The name ... is already taken</code> means someone in the world already used that name - change <code>SUFFIX</code>. <code>Quota exceeded</code> means your subscription has no room for this service in that region; try another region with <code>export LOCATION=...</code> and run the command again.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The OpenAI resource exists. Go on to Step 3 and switch on the two models.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Change <code>SUFFIX</code> or <code>LOCATION</code> as the <strong>If it fails</strong> line says and run the command again. Still failing: Section 12 table, row <code>Quota exceeded</code> or "model not available in this region".</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 3 - Switch on the two models</p>
+<p>On Azure you call a <em>deployment name</em>, not a model name. So each model is deployed under its own name. Run both commands.</p>
+<p><strong>What this does:</strong> deploys <code>gpt-5.1</code> once, used for the answers, the router, the grader and the guardrail, and <code>text-embedding-3-small</code> for embeddings. One language model is enough, and it is the only one still deployable here: <code>gpt-4o-mini</code> is marked Deprecating and refuses to deploy, and <code>gpt-4o</code> is marked Legacy.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az cognitiveservices account deployment create --name "$OPENAI" --resource-group "$RG" \
+  --deployment-name gpt-5.1 --model-name gpt-5.1 --model-version 2025-11-13 --model-format OpenAI \
+  --sku-name GlobalStandard --sku-capacity 30 --output none</pre>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az cognitiveservices account deployment create --name "$OPENAI" --resource-group "$RG" \
+  --deployment-name text-embedding-3-small --model-name text-embedding-3-small --model-version 1 \
+  --model-format OpenAI --sku-name GlobalStandard --sku-capacity 120 --output none</pre>
+<p><strong>You should see:</strong> nothing for each of the two. To check both, run the list command below; it prints <code>gpt-5.1</code> and <code>text-embedding-3-small</code>.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az cognitiveservices account deployment list --name "$OPENAI" --resource-group "$RG" --query "[].name" -o tsv</pre>
+<p><strong>If it fails:</strong> <code>ServiceModelDeprecating</code> means that model is being retired and cannot be deployed any more - use <code>gpt-5.1</code> as above. <code>Quota exceeded</code> means your subscription has no room for that model in that region. To see what is actually on offer in your region, run this and pick a model whose lifecycle is <code>GenerallyAvailable</code>:</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az cognitiveservices model list --location eastus2 --query "[?model.format=='OpenAI' &amp;&amp; (contains(model.name,'gpt-5') || contains(model.name,'gpt-4.1') || contains(model.name,'gpt-4o'))].{name:model.name, version:model.version, lifecycle:model.lifecycleStatus}" -o table</pre>
+<p><strong>You should see:</strong> a table of model names, versions and lifecycle states. If a model shows <code>Deprecating</code> or <code>Legacy</code>, choose a <code>GenerallyAvailable</code> one instead.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Both deployments are listed. Go on to Step 4 and create Azure AI Search.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Deploy <code>gpt-5.1</code> as the <strong>If it fails</strong> line says, or pick a <code>GenerallyAvailable</code> model from the list. Still failing: Section 12 table, row <code>ServiceModelDeprecating</code>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 4 - Create Azure AI Search</p>
+<p><strong>What this does:</strong> creates the search service that will hold the index, in <code>$SEARCH_LOCATION</code> (centralus by default). <code>--semantic-search free</code> turns on the free semantic ranker, which allows 1,000 reranked queries a month at no extra cost.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az search service create --name "$SEARCH" --resource-group "$RG" --location "$SEARCH_LOCATION" \
+  --sku basic --semantic-search free --output none</pre>
+<p><strong>You should see:</strong> nothing, after a few minutes. Basic is billed per hour.</p>
+<p><strong>If it fails:</strong> <code>InvalidResourceLocation</code> or <code>InsufficientResourcesAvailable</code> means that region is out of capacity for AI Search - this is exactly what happened in eastus2. Keep <code>SEARCH_LOCATION=centralus</code> and run the command again. <code>The name ... is already taken</code> - change <code>SUFFIX</code>. If it says the service <code>already exists in location centralus</code>, the service is already there: leave it alone, or delete it before trying another region, because one name cannot exist in two regions.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The search service exists. Go on to Step 5 and create the storage account.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Keep <code>SEARCH_LOCATION=centralus</code> and run the command again, as the <strong>If it fails</strong> line says. Still failing: Section 12 table, rows <code>InvalidResourceLocation</code> and <code>... already exists in location centralus</code>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 5 - Create the storage account</p>
+<p><strong>What this does:</strong> creates the storage account that will hold your PDFs. <code>--allow-blob-public-access false</code> keeps every file private.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az storage account create --name "$STORAGE" --resource-group "$RG" --location "$LOCATION" \
+  --sku Standard_LRS --allow-blob-public-access false --output none</pre>
+<p><strong>You should see:</strong> nothing.</p>
+<p><strong>If it fails:</strong> storage account names must be lowercase letters and digits only, with no dashes. If the name is taken, change <code>SUFFIX</code>.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The storage account exists. Go on to Step 6 and read the connection string.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Use lowercase letters and digits only, or change <code>SUFFIX</code>, as the <strong>If it fails</strong> line says. Still failing: Section 12 table, row <code>The name ... is already taken</code> on create.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 6 - Read the connection string into a variable</p>
+<p><strong>What this does:</strong> asks Azure for the storage account's connection string and stores it in a shell variable called <code>CONN</code>. It is not printed, on purpose.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">CONN=$(az storage account show-connection-string --name "$STORAGE" --resource-group "$RG" \
+  --query connectionString --output tsv)</pre>
+<p><strong>You should see:</strong> nothing. <code>$CONN</code> now holds the connection string. Do not print it, and never paste it into a chat or a document.</p>
+<p><strong>If it fails:</strong> "resource not found" means Step 5 did not finish, or <code>STORAGE</code> holds a different name. Run the <code>export</code> lines from Section 3 again.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> <code>$CONN</code> holds the connection string. Go on to Step 7 and create the PDF container.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Re-run Step 5 or the Section 3 <code>export</code> lines, as the <strong>If it fails</strong> line says. Still failing: Section 12 table.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 7 - Create the PDF container</p>
+<p><strong>What this does:</strong> creates the container (folder) inside storage where the PDFs will live.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az storage container create --name "$CONTAINER" --connection-string "$CONN" --output none</pre>
+<p><strong>You should see:</strong> nothing. To confirm, run the list command below; it prints <code>supply-chain-docs</code>.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az storage container list --connection-string "$CONN" --query "[].name" -o tsv</pre>
+<p><strong>If it fails:</strong> <code>The specified container does not exist</code> later on means this step was skipped. Run it again.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Section 4b is done. Go to Section 5.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Run the container command again, as the <strong>If it fails</strong> line says. Still failing: Section 12 table, row <code>The specified container does not exist</code>.</p>
+
+<hr>
+
+<h2>5. Fill in the .env file</h2>
+
+<p>The <code>.env</code> file holds the settings and secret keys your code reads at start-up. It lives only on your Mac. It is already listed in <code>.gitignore</code>, so it will never be committed.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 1 - Let the script fill it in</p>
+<p><strong>What this does:</strong> <code>azure_setup/fill-env.sh</code> asks Azure for the endpoint, the two keys and the storage connection string, and writes them into <code>.env</code> for you. It never prints a secret. If <code>.env</code> does not exist yet, it copies the template first.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">export SUFFIX=12345
+bash azure_setup/fill-env.sh</pre>
+<p><strong>You should see:</strong> <code>Checked .env (values are hidden):</code> followed by 15 lines, each a setting name and the word <code>filled</code>, for example <code>AZURE_OPENAI_API_KEY    filled</code>. If any line says <code>EMPTY</code>, stop there and ask for help - do not carry on.</p>
+<p><strong>If it fails:</strong> <code>az: command not found</code> means the PATH line is missing from this window - run <code>export PATH="$PATH:$HOME/azure-cli-venv/bin"</code>. <code>Please run 'az login'</code> means your session expired - run <code>az login</code>. "resource not found" means <code>SUFFIX</code> is not the number you created the resources with.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Every line says <code>filled</code>. Go on to Step 2 and confirm that no line says <code>EMPTY</code>.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Fix the PATH or run <code>az login</code> as the <strong>If it fails</strong> line says, then run the script again. Still failing: Section 12 table, row <code>RuntimeError: These settings are missing from .env</code>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 2 - Check the result yourself</p>
+<p><strong>What this does:</strong> prints the name of each secret line and whether it has a value, without printing the value. This is the check that catches the empty lines.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">awk -F= '$1 ~ /KEY|CONNECTION/ {print $1, (length($2)&gt;0 ? "filled":"EMPTY")}' .env</pre>
+<p><strong>You should see:</strong> three lines, all <code>filled</code>: <code>AZURE_OPENAI_API_KEY</code>, <code>AZURE_SEARCH_API_KEY</code> and <code>AZURE_STORAGE_CONNECTION_STRING</code>.</p>
+<p><strong>If it fails:</strong> an <code>EMPTY</code> line means the value is missing - run Step 1 again. Do not trust a check like <code>sed 's/=.*/=&lt;set&gt;/' .env</code>: it prints <code>&lt;set&gt;</code> even for a line that is empty after the equals sign, which is exactly how two values stayed empty the first time.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> All three lines say <code>filled</code>: skip Steps 3 and 4 and go to Section 6.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Run Step 1 again, as the <strong>If it fails</strong> line says. Still failing: Section 12 table, row <code>RuntimeError: These settings are missing from .env</code>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 3 - Know where each value comes from</p>
+<p>You do not have to invent any of these. <code>fill-env.sh</code> writes them for you; this table says where each one comes from, in case you ever want to check one by hand.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Go on to Step 4 only if <code>fill-env.sh</code> could not run at all; otherwise skip Step 4 and go to Section 6.</p>
+
+<table>
+  <tr><th style="width:44%;">Line in .env</th><th>Where the value comes from</th></tr>
+  <tr><td><code>AZURE_OPENAI_ENDPOINT</code></td><td>Printed by <code>provision.sh</code>. In the portal: your OpenAI resource, then <strong>Keys and Endpoint</strong>, then the Endpoint field.</td></tr>
+  <tr><td><code>AZURE_OPENAI_API_KEY</code></td><td>Printed by <code>provision.sh</code>. In the portal: the same <strong>Keys and Endpoint</strong> page, KEY 1.</td></tr>
+  <tr><td><code>AZURE_OPENAI_API_VERSION</code></td><td><code>2025-04-01-preview</code>. Written by the script; leave it as it is.</td></tr>
+  <tr><td><code>AZURE_OPENAI_GENERATION_DEPLOYMENT</code></td><td>The deployment name, <code>gpt-5.1</code>. In the portal: your OpenAI resource, then <strong>Model deployments</strong>.</td></tr>
+  <tr><td><code>AZURE_OPENAI_GUARDRAIL_DEPLOYMENT</code></td><td><code>gpt-5.1</code>, from the same <strong>Model deployments</strong> list.</td></tr>
+  <tr><td><code>AZURE_OPENAI_FAST_DEPLOYMENT</code></td><td><code>gpt-5.1</code>. The router and the grader use this one.</td></tr>
+  <tr><td><code>AZURE_OPENAI_EMBEDDING_DEPLOYMENT</code></td><td><code>text-embedding-3-small</code>. It must stay a real embedding model.</td></tr>
+  <tr><td><code>AZURE_SEARCH_ENDPOINT</code></td><td>Printed by <code>provision.sh</code>. In the portal: your Search service, then <strong>Url</strong> on the Overview page.</td></tr>
+  <tr><td><code>AZURE_SEARCH_API_KEY</code></td><td>Printed by <code>provision.sh</code>. In the portal: the Search service, then <strong>Keys</strong>, then the primary admin key.</td></tr>
+  <tr><td><code>AZURE_SEARCH_INDEX</code></td><td><code>supply-chain</code>. Leave it as it is.</td></tr>
+  <tr><td><code>AZURE_STORAGE_CONNECTION_STRING</code></td><td>Printed by <code>provision.sh</code>. In the portal: the storage account, then <strong>Access keys</strong>, then <strong>Show keys</strong>, then the connection string.</td></tr>
+  <tr><td><code>AZURE_STORAGE_CONTAINER</code></td><td><code>supply-chain-docs</code>. Leave it as it is.</td></tr>
+  <tr><td><code>AZURE_MARKDOWN_CONTAINER</code></td><td><code>supply-chain-markdown</code>. Where the trigger writes the converted text.</td></tr>
+  <tr><td><code>AZURE_RESULTS_CONTAINER</code></td><td><code>supply-chain-results</code>. Where the agent writes its answer.</td></tr>
+  <tr><td><code>LOCAL_PDF_DIR</code></td><td><code>./data/raw</code>, the folder on your Mac holding the five PDFs.</td></tr>
+</table>
+
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>Never share or commit these values.</strong> The two API keys and the connection string are passwords: anyone who has them can spend your money. Do not paste them into a chat, an email, a screenshot or a document. Do not commit <code>.env</code>. If a key ever leaks, open the portal, go to the resource's <strong>Keys</strong> page and click <strong>Regenerate</strong>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 4 - Fallback only: paste the block by hand</p>
+<p>Use this only if <code>fill-env.sh</code> cannot run at all. It is the route that left two values empty the first time, so check the result with the <code>awk</code> command from Step 2 afterwards.</p>
+<p><strong>What this does:</strong> copies the template to <code>.env</code> and opens it in TextEdit.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">cp .env.example .env
+open -e .env</pre>
+<p><strong>You should see:</strong> TextEdit opens with the file. Paste the block that <code>provision.sh</code> printed, save with Cmd+S and close the window. Then run the <code>awk</code> check from Step 2.</p>
+<p><strong>If it fails:</strong> if TextEdit opens an empty window, you are not in the project folder - run the <code>cd</code> command from Section 2 again. The embedding line must stay a real embedding model (<code>text-embedding-3-small</code>), because the index is built for 512 numbers per chunk.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The fallback is done. Go to Section 6.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Run the <code>awk</code> check from Step 2 as the <strong>If it fails</strong> line says, and fill the empty line by hand. Still failing: Section 12 table, row <code>RuntimeError: These settings are missing from .env</code>.</p>
+
+<hr>
+
+<h2>6. Upload the PDFs and build the search index</h2>
+
+<p>Either order works, but do the upload first: the index is built from the files in the container, so they have to be there before the ingestion runs.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 1 - Check the PDFs are on your Mac</p>
+<p><strong>What this does:</strong> lists the files in <code>data/raw</code>, the folder the upload script reads.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">ls data/raw</pre>
+<p><strong>You should see:</strong> the five file names, for example <code>sc_annual_review_fy2025.pdf</code>.</p>
+<p><strong>If it fails:</strong> an empty list means the PDFs are missing. Put them in <code>data/raw/</code>, or point <code>LOCAL_PDF_DIR</code> in <code>.env</code> at the folder where they are.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The five file names are listed. Go on to Step 2 and upload the PDFs.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Put the PDFs in <code>data/raw/</code> as the <strong>If it fails</strong> line says, then run the command again. Still failing: Section 12 table.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 2 - Upload the PDFs to the container</p>
+<p><strong>What this does:</strong> copies every PDF from <code>data/raw</code> into the <code>supply-chain-docs</code> container in Azure.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">python ingestion/upload_pdfs.py</pre>
+<p><strong>You should see:</strong> five lines, one per file, each looking like <code>UPLOADED sc_annual_review_fy2025.pdf (0.1 MB)</code>.</p>
+<p><strong>If it fails:</strong> an authentication error means <code>.env</code> is incomplete - go back to Section 5. A timeout on a big file is a slow connection; try again.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Five <code>UPLOADED</code> lines are printed. Go on to Step 3 and build the index.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Go back to Section 5 for <code>.env</code> as the <strong>If it fails</strong> line says, then retry. Still failing: Section 12 table, row <code>az storage blob upload</code> times out.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 3 - Convert, chunk, embed and index in one go</p>
+<p><strong>What this does:</strong> downloads each PDF, converts it to text, cuts it into chunks, turns each chunk into numbers (embeddings) with Azure OpenAI, and uploads the result into the search index. This is the slow step.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">python run_ingestion.py</pre>
+<p><strong>You should see:</strong> three numbered steps. <strong>STEP 1</strong> lists the five PDFs with their character counts, and says <code>from PyMuPDF4LLM</code> the first time (<code>from cache</code> on later runs). <strong>STEP 2</strong> prints a chunk table like this one, which is what the real run produced:</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">EXPECTED OUTPUT</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">annual_review      FY2025   14
+annual_review      FY2026   14
+risk_register      FY2026   14
+logistics_report   FY2026    8
+procurement_policy FY2026    9
+TOTAL                       59 chunks</pre>
+<p><strong>STEP 3</strong> then prints <code>creating index supply-chain</code>, <code>embedding 59 chunks</code>, <code>uploaded 59 of 59 chunks</code> and <code>Done in 10 seconds.</code></p>
+<p><strong>If it fails:</strong> a 401 from AI Search means the search key in <code>.env</code> is wrong or was copied short - it is 32 characters. A quota error from OpenAI means the embedding deployment is not ready yet; wait a minute and retry.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> <code>uploaded 59 of 59 chunks</code> is printed. Go on to Step 4 and check the index in the portal.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Check the search key or wait for the embedding deployment as the <strong>If it fails</strong> line says, then run it again. Still failing: Section 12 table, row <code>401</code> or <code>Invalid API key</code> from AI Search.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 4 - Check the index in the portal</p>
+<p>Open <strong>https://portal.azure.com</strong> and sign in. Then:</p>
+<ol>
+  <li>Click the search box at the top of the page and type <code>srch-supplychain-</code> followed by your SUFFIX. Click the service that appears.</li>
+  <li>In the left menu, click <strong>Indexes</strong>.</li>
+  <li>Click <code>supply-chain</code>.</li>
+  <li>Click <strong>Search explorer</strong>.</li>
+  <li>Click <strong>Search</strong> with the box empty.</li>
+</ol>
+<p><strong>You should see:</strong> in the <strong>Indexes</strong> list, <code>supply-chain</code> with a <strong>Document count</strong> of <code>59</code>. In <strong>Search explorer</strong>, a list of documents, each with <code>doc_type</code>, <code>fiscal_year</code> and <code>text</code>.</p>
+<p><strong>If it fails:</strong> an empty result means Step 3 did not finish. Run it again and watch for the final <code>uploaded N of N chunks</code> line.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The index shows 59 documents. Go on to Step 5 and check the container with a command.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Run Step 3 again as the <strong>If it fails</strong> line says, and watch for <code>uploaded N of N chunks</code>. Still failing: Section 12 table.</p>
+
+<p style="background:#e8f1ff; border-left:8px solid #1f6feb; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>Confirmed on our run: the chunks are really in the index.</strong> Search explorer on the <code>supply-chain</code> index shows the converted markdown in the <code>text</code> field, 59 chunks in total. The exact path in the portal is <strong>AI Search</strong> -> <code>srch-supplychain-12345</code> -> <strong>Indexes</strong> -> <code>supply-chain</code> -> <strong>Search explorer</strong> -> <strong>JSON view</strong>. Paste this query into the box and click <strong>Search</strong>:</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">{"search":"*","select":"doc_title,fiscal_year,position,text","top":5}</pre>
+<p><strong>You should see:</strong> five documents, each with <code>doc_title</code>, <code>fiscal_year</code>, <code>position</code> and a <code>text</code> field holding the markdown of that chunk. That is the same text the agent reads when it answers a question.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 5 - Check the container with a command</p>
+<p><strong>What this does:</strong> lists the file names in the PDF container, so you can see the upload worked.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az storage blob list --container-name supply-chain-docs --connection-string "$CONN" --query "[].name" -o tsv</pre>
+<p><strong>You should see:</strong> the five PDF names, one per line.</p>
+<p><strong>If it fails:</strong> if <code>$CONN</code> is empty, you used the one-command way in Section 4a and never set it. Either run the <code>CONN=</code> command from Section 4b Step 6, or load <code>.env</code> first with the line-by-line loop in Section 8 Step 2 and use <code>"$AZURE_STORAGE_CONNECTION_STRING"</code> in place of <code>"$CONN"</code>.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The five PDF names are listed. Go on to Step 6 and check the index with a command.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Set <code>$CONN</code> or load <code>.env</code> as the <strong>If it fails</strong> line says, then repeat. Still failing: Section 12 table, row <code>The specified container does not exist</code>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 6 - Check the index with a command</p>
+<p><strong>What this does:</strong> loads the <code>.env</code> values into this window without printing them, confirms the search service exists, then asks the service itself how many documents the index holds.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">while IFS= read -r line || [ -n "$line" ]; do case "$line" in ''|\#*) continue ;; esac; export "${line%%=*}=${line#*=}"; done &lt; .env
+az search service show --name "$SEARCH" --resource-group "$RG" --query name -o tsv</pre>
+<p><strong>You should see:</strong> <code>srch-supplychain-12345</code>, your own service name.</p>
+<p><strong>What this does:</strong> asks the index for its statistics. The Azure CLI has no <code>az search index</code> command, so this one call goes straight to the service's own web address.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">curl -sS -H "api-key: $AZURE_SEARCH_API_KEY" \
+  "https://$SEARCH.search.windows.net/indexes/supply-chain/stats?api-version=2024-07-01"</pre>
+<p><strong>You should see:</strong> JSON that starts <code>{"documentCount":59,</code> followed by a storage size and a vector index size.</p>
+<p><strong>If it fails:</strong> a 404 means the index does not exist - run Step 3 again. A 403 means the key is not the admin key - run Section 5 Step 1 again. An empty key means the <code>.env</code> loading command above was skipped.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Section 6 is done. Go to Section 7.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Re-run Step 3 for a 404, or Section 5 Step 1 for a 403, as the <strong>If it fails</strong> line says. Still failing: Section 12 table.</p>
+
+<hr>
+
+<h2>7. Ask a question by hand</h2>
+
+<p>There are three ways to start the agent yourself. All three run the same pipeline.</p>
+
+<h3>Drawing 3 - Two ways to start the agent</h3>
+
+<svg viewBox="0 0 780 340" width="100%" style="max-width:780px; height:auto; display:block; margin:0 auto;" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Two ways to start the agent: automatically when a new file lands, or by hand from Terminal, a web page or an HTTP call">
+  <defs>
+    <marker id="a3" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"></path>
+    </marker>
+  </defs>
+  <text x="20" y="22" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#14532d">AUTOMATIC</text>
+  <text x="420" y="22" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#7c2d12">BY HAND</text>
+
+  <rect x="20" y="40" width="320" height="50" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="2"></rect>
+  <text x="180" y="70" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#14532d">A new PDF lands in supply-chain-docs</text>
+  <line x1="180" y1="92" x2="180" y2="116" stroke="#334155" stroke-width="2" marker-end="url(#a3)"></line>
+  <rect x="20" y="120" width="320" height="50" rx="6" fill="#ffedd5" stroke="#ea580c" stroke-width="2"></rect>
+  <text x="180" y="150" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#7c2d12">The blob trigger fires by itself</text>
+  <line x1="180" y1="172" x2="180" y2="248" stroke="#334155" stroke-width="2" marker-end="url(#a3)"></line>
+
+  <rect x="420" y="30" width="340" height="42" rx="6" fill="#dbeafe" stroke="#1f6feb" stroke-width="2"></rect>
+  <text x="590" y="56" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#123a75">Terminal: python ingestion/process_blob.py</text>
+  <rect x="420" y="88" width="340" height="42" rx="6" fill="#dbeafe" stroke="#1f6feb" stroke-width="2"></rect>
+  <text x="590" y="114" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#123a75">Web page: python UI/server.py</text>
+  <rect x="420" y="146" width="340" height="42" rx="6" fill="#dbeafe" stroke="#1f6feb" stroke-width="2"></rect>
+  <text x="590" y="172" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#123a75">HTTP call: /api/run?code=...</text>
+  <line x1="590" y1="190" x2="590" y2="248" stroke="#334155" stroke-width="2" marker-end="url(#a3)"></line>
+
+  <rect x="140" y="252" width="500" height="62" rx="6" fill="#ede9fe" stroke="#7c3aed" stroke-width="2"></rect>
+  <text x="390" y="277" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#4c1d95">The same pipeline code runs</text>
+  <text x="390" y="298" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#4c1d95">markdown, index, answer</text>
+</svg>
+<p style="font-size:14px; color:#444444; text-align:center; margin:6px 0 24px 0;"><em>Drawing 3 - Two ways to start the agent. Automatic on the left, three manual ways on the right, one pipeline in the middle.</em></p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 1 - Way one: one question at the keyboard</p>
+<p><strong>What this does:</strong> starts the agent in Terminal and asks it a question. It prints the plan, the chunks it found, the grounding verdict, and then the answer.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">python run_query.py</pre>
+<p><strong>You should see:</strong> the router's plan, the retrieved chunks, the grounding verdict, then the answer. If grounding is low, the graph pauses and asks <code>approve or reject? [a/r]:</code> - type <code>a</code> and press Return.</p>
+<p style="background:#fff8d6; border-left:8px solid #e0b400; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>Expected, not yet confirmed.</strong> The two questions below are the ones to try, and the results described are what the code is written to produce. They have not been run on this machine yet, so treat them as the expected result, not as a recorded one.</p>
+<p><strong>Question 1 - a comparison across two years.</strong> Type <code>How did on-time delivery change between FY2025 and FY2026?</code> You should see a router plan that names both annual reviews, then a grader verdict, then an answer whose sentences carry <code>[1]</code> style citations, then a guardrail verdict.</p>
+<p><strong>Question 2 - a refusal test.</strong> Type <code>Which supplier should I fire and what stock should I buy?</code> You should see a polite refusal, and no search at all: the router should decide the question is out of scope before anything is retrieved.</p>
+<p><strong>If it fails:</strong> a 401 means a key in <code>.env</code> is wrong. An empty answer means the index is empty - go back to Section 6 Step 3.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The answer is printed with its citations. Go on to Step 2 and try the web page.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Check the key in <code>.env</code>, or re-run Section 6 Step 3 for an empty index, as the <strong>If it fails</strong> line says. Still failing: Section 12 table.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 2 - Way two: a web page on your Mac</p>
+<p><strong>What this does:</strong> starts a small web server on your own computer, so you can type questions in a browser.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">python UI/server.py</pre>
+<p><strong>You should see:</strong> <code>Supply-chain RAG UI on http://127.0.0.1:8000   (Ctrl+C to stop)</code>. Open <strong>http://127.0.0.1:8000</strong> in your browser. Press <strong>Ctrl+C</strong> in Terminal when you are done. This step is expected but not yet confirmed on this machine.</p>
+<p><strong>If it fails:</strong> <code>Address already in use</code> means the server is already running in another window. Close that window, or press Ctrl+C in it.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The page answers on <code>http://127.0.0.1:8000</code>. Go on to Step 3 and send one file through the whole pipeline.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Close the other window or press Ctrl+C in it, as the <strong>If it fails</strong> line says, then start the server again. Still failing: Section 12 table.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 3 - Way three: one file through the whole pipeline</p>
+<p><strong>What this does:</strong> runs the same function the blob trigger calls, on one named file. It converts, indexes and asks the agent about that file.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">python ingestion/process_blob.py new_supplier_audit_fy2027.pdf</pre>
+<p><strong>You should see:</strong> a JSON block with <code>"status": "ok"</code>, <code>"markdown_blob": "new_supplier_audit_fy2027.md"</code>, a <code>"chunks_indexed"</code> count and <code>"answer_blob": "new_supplier_audit_fy2027.answer.md"</code>.</p>
+<p><strong>If it fails:</strong> "blob not found" means that file is not in the container yet. Upload it first, or use one of the five names from <code>ls data/raw</code>.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The JSON says <code>"status": "ok"</code>. Go on to Step 4 and run the ingestion without the agent.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Upload that file first, as the <strong>If it fails</strong> line says, or use one of the five names from <code>ls data/raw</code>. Still failing: Section 12 table.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 4 - Ingestion only, no agent</p>
+<p><strong>What this does:</strong> the same run, but it stops after indexing and skips the agent. Useful when you only want the search index filled.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">python ingestion/process_blob.py new_supplier_audit_fy2027.pdf --no-agent</pre>
+<p><strong>You should see:</strong> the same JSON, with <code>"agent_status": "skipped"</code> and <code>"answer_blob": null</code>.</p>
+<p><strong>If it fails:</strong> same causes as Step 3.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Section 7 is done. Go to Section 8.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Same causes as Step 3, as the <strong>If it fails</strong> line says. Still failing: Section 12 table.</p>
+
+<hr>
+
+<h2>8. Turn on the automatic trigger and test it</h2>
+
+<p style="background:#fff8d6; border-left:8px solid #e0b400; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>Shortcut: skip steps that already worked.</strong> This section has two ways to test the function app. The trigger test (Steps 2-7) needs a freshly uploaded PDF, and on the Consumption plan it can be several minutes late. If the HTTP test in Section 9 already returns an answer (HTTP 200 with JSON), then the function app and its settings are working: you may skip Steps 2, 3 and 4 here and jump to Step 5 (check the results container), or simply carry on to Section 9 and Section 10. Step 1 is the only step that must be done. If Step 1 already printed <code>Done. Function app: ...</code>, never re-run it unless something changed.</p>
+
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>What happened to us here, so it does not surprise you.</strong> Step 8 and Step 9 are where this project really hurt. Eight things went wrong, in this order: (1) <code>set -a; source .env</code> cut the storage connection string at its first <code>;</code>; (2) the function list was empty and <code>curl</code> returned nothing at all, because Azure's remote build had not installed the Python packages; (3) <code>az functionapp deploy ... --type zip</code> answered <code>This API isn't available in this environment yet!</code>; (4) <code>az webapp log tail</code> answered <code>404</code> on <code>/logstream</code>; (5) <code>pip</code> installed <code>pymupdf4llm 2.0</code>, an empty placeholder; (6) <strong>Ctrl+C</strong> during the upload cancelled the deploy; (7) a Terminal stayed stuck in <code>az webapp log tail</code> and <code>wq:</code> was typed into it; (8) <code>az</code> refused to install the <code>application-insights</code> extension because it is in preview. Each one has a fix below, and each one is a row in the Section 12 table.</p>
+
+<p style="background:#fff8d6; border-left:8px solid #e0b400; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>The one that matters most: an empty function list does not mean a broken app.</strong> On this Linux Consumption app, <code>az functionapp function list</code> can print nothing even when the app works, so do <strong>not</strong> use it as the success test. The real proof is the <code>curl</code> call in Section 9 returning <code>HTTP 200</code> with JSON. The cause of the empty list was that Azure's remote build never installed the packages; <code>azure_setup/deploy-function.sh</code> now installs the Linux packages on your Mac, bundles them in the zip, and switches the remote build off (<code>SCM_DO_BUILD_DURING_DEPLOYMENT=false</code>, <code>ENABLE_ORYX_BUILD=false</code>). The zip is about 90 MB and the upload takes 3 to 5 minutes: do not press Ctrl+C.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 1 - Create the function app and deploy the code</p>
+<p><strong>What this does:</strong> creates the function app, creates the two extra containers it writes to, copies your <code>.env</code> values into the app's settings, and uploads the code.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">SUFFIX=$SUFFIX RESOURCE_GROUP=$RG STORAGE=$STORAGE bash azure_setup/provision-function.sh</pre>
+<p><strong>You should see:</strong> <code>Creating function app func-supplychain-12345 ...</code>, then <code>Deploying the code</code>, then <code>1. Packaging</code> with <code>Installing the Linux packages into the zip (this takes a minute or two)</code> and a size near <code>90M zip</code>, then <code>2. Switching the remote build off</code>, then <code>3. Uploading (3 to 5 minutes; do not press Ctrl+C)</code>, and finally a block naming the blob trigger path and the HTTP address. The upload really does take 3 to 5 minutes: let it finish.</p>
+<p><strong>If it fails:</strong> <code>Set SUFFIX to the same value provision.sh used</code> means the variable was lost - run the <code>export</code> lines from Section 3 again. <code>Set STORAGE ...</code> means the same for <code>STORAGE</code>.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> <code>Done. Function app: ...</code> is printed. Go on to Step 2 and load the <code>.env</code> values into this shell.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Re-run the Section 3 <code>export</code> lines as the <strong>If it fails</strong> line says, then run the script again. Still failing: Section 12 table, row <code>ModuleNotFoundError: config</code> in the function log.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 2 - Load the .env values into this shell without printing them</p>
+<p><strong>What this does:</strong> reads <code>.env</code> one line at a time, splits each line at the first <code>=</code> only, and exports the name and the value into this Terminal window, so the commands below can use <code>$AZURE_STORAGE_CONNECTION_STRING</code>. It prints nothing.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">while IFS= read -r line || [ -n "$line" ]; do case "$line" in ''|\#*) continue ;; esac; export "${line%%=*}=${line#*=}"; done &lt; .env</pre>
+<p><strong>You should see:</strong> nothing. Each line is read whole, the name is everything before the first <code>=</code>, and the value is everything after it. Never <code>echo</code> these values.</p>
+<p style="background:#fff8d6; border-left:8px solid #e0b400; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>Do not use <code>source .env</code> here.</strong> Plain <code>source .env</code> (with or without <code>set -a</code>) must NOT be used, because the storage connection string contains a <code>;</code> and bash treats it as the end of the command. The value is cut in half, and the app then reports a connection string that is missing its details. The loop above is the safe way.</p>
+<p><strong>If it fails:</strong> "No such file" means you are not in the project folder, or <code>.env</code> was never created - see Section 5.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The values are in this shell. Go on to Step 3 and upload a new PDF to test the trigger.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Go back to Section 5 for <code>.env</code> as the <strong>If it fails</strong> line says, then repeat. Still failing: Section 12 table, row <code>Invalid connection string</code>, or <code>missing required connection details</code>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 3 - Upload a new PDF to test the trigger</p>
+<p><strong>What this does:</strong> uploads one PDF under a new name. The name is what the metadata is inferred from, so the new name is what matters, not the file's contents.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az storage blob upload --container-name supply-chain-docs \
+  --file "data/raw/sc_annual_review_fy2026.pdf" \
+  --name "new_supplier_audit_fy2027.pdf" \
+  --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --overwrite</pre>
+<p><strong>You should see:</strong> a small progress block ending with <code>Finished[########################################]  100.0000%</code>.</p>
+<p><strong>If it fails:</strong> if it times out on a large file, add <code>--timeout 600</code>, or upload from the portal instead. An empty connection string means Step 2 was skipped.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The upload reaches <code>100.0000%</code>. Go on to Step 4 and check the markdown container.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Add <code>--timeout 600</code> or upload from the portal, as the <strong>If it fails</strong> line says. Still failing: Section 12 table, row <code>az storage blob upload</code> times out.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 4 - Wait, then check the markdown container</p>
+<p><strong>What this does:</strong> lists the files in the container where the trigger writes the converted text.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az storage blob list --container-name supply-chain-markdown \
+  --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --query "[].name" -o tsv</pre>
+<p><strong>You should see:</strong> <code>new_supplier_audit_fy2027.md</code>.</p>
+<p><strong>If it fails:</strong> an empty list usually means "not yet". On the Consumption plan the trigger <em>polls</em> for new blobs, so it can be a few minutes late. Wait and run it again. If it stays empty after ten minutes, check the trigger path setting with the command in Section 12.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> <code>new_supplier_audit_fy2027.md</code> is listed. Go on to Step 5 and check the results container.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Wait and run it again, as the <strong>If it fails</strong> line says; after ten minutes use the Section 12 row <em>The trigger never fires</em>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 5 - Check the results container</p>
+<p><strong>What this does:</strong> lists the files in the container where the agent writes its answer.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az storage blob list --container-name supply-chain-results \
+  --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --query "[].name" -o tsv</pre>
+<p><strong>You should see:</strong> <code>new_supplier_audit_fy2027.answer.md</code>.</p>
+<p><strong>If it fails:</strong> if the markdown file exists but this one does not, the agent step failed. Read the runs in Application Insights with Step 7 below.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> <code>new_supplier_audit_fy2027.answer.md</code> is listed. Go on to Step 6 and read the answer back.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Read the runs in Application Insights with Step 7, as the <strong>If it fails</strong> line says. Still failing: Section 12 table.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 6 - Read the answer back</p>
+<p><strong>What this does:</strong> downloads the answer file to your Mac and opens it in TextEdit.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az storage blob download --container-name supply-chain-results \
+  --name new_supplier_audit_fy2027.answer.md --file /tmp/answer.md \
+  --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --output none
+open -e /tmp/answer.md</pre>
+<p><strong>You should see:</strong> TextEdit showing the question, the router's plan, the grounding verdict and the answer.</p>
+<p><strong>If it fails:</strong> "blob not found" means Step 5 has not produced the file yet. Wait and retry.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The answer file opens in TextEdit. Go on to Step 7 and read the runs in Application Insights.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Wait and retry, as the <strong>If it fails</strong> line says. Still failing: Section 12 table.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 7 - Read the runs in Application Insights (the log stream does not work here)</p>
+<p><strong>What this does:</strong> nothing in Terminal. The runs are read in the portal, because the log stream is not available on this plan.</p>
+<p style="background:#fff8d6; border-left:8px solid #e0b400; padding:14px 18px; margin:18px 0; font-size:17px;"><strong><code>az webapp log tail</code> answers <code>404</code> on <code>/logstream</code> here.</strong> That is the Linux Consumption plan, not a fault in your app: the log stream endpoint does not exist on it. Use Application Insights instead. If a Terminal is already stuck in <code>az webapp log tail</code>, press <strong>Ctrl+C</strong> to get your prompt back - and <code>wq:</code> typed into that Terminal is a vim habit, not a command, so it does nothing.</p>
+<ol>
+  <li>Open <strong>https://portal.azure.com</strong> and sign in.</li>
+  <li>Click the search box at the top and type <code>func-supplychain-</code> followed by your SUFFIX. Click the <strong>Application Insights</strong> resource that appears.</li>
+  <li>Under <strong>Investigate</strong>, click <strong>Transaction search</strong> to see each request on its own.</li>
+  <li>Or click <strong>Logs</strong> and run <code>traces | take 20</code> to read the app's own messages.</li>
+</ol>
+<p><strong>You should see:</strong> one entry per request, with the time, the result code and the duration. The portal also lists the runs under <strong>Function app</strong>, then <strong>Monitor</strong>, then <strong>Invocations</strong>.</p>
+<p><strong>If it fails:</strong> no entries at all means nothing has called the app yet, or the <code>APPLICATIONINSIGHTS_CONNECTION_STRING</code> setting is missing - work through Section 9b. "resource not found" means the function app does not exist yet - run Step 1 again.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Section 8 is done. Go to Section 9.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Work through Section 9b for a missing setting, or re-run Step 1 for a missing app, as the <strong>If it fails</strong> line says. Still failing: Section 12 table, row <em>The Application Map is empty</em>.</p>
+
+<p style="background:#fff8d6; border-left:8px solid #e0b400; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>Two honest limits.</strong> (1) The Consumption plan polls for new blobs, so a trigger can be a few minutes late - that is normal, not a bug. (2) A run is stopped after 10 minutes (<code>functionTimeout</code> in <code>function_app/host.json</code>), which a very large PDF can exceed.</p>
+
+<p style="background:#fff8d6; border-left:8px solid #e0b400; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>One more limit, and it surprises people.</strong> Documents that arrive this way are labelled <code>uploaded</code>, and the router will not search them yet. The chunks are indexed, but the router only plans searches for the five known documents. So a question about a freshly uploaded file may come back empty. Ask about the five known documents, or extend the router.</p>
+
+<hr>
+
+<h2>9. Start it by HTTP call</h2>
+
+<p>The <code>run</code> route requires a function key, so you need one before you can call it.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 1 - Get the function key</p>
+<p><strong>What this does:</strong> prints the app's default function key. It is a long string - treat it like a password.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az functionapp keys list --name "func-supplychain-$SUFFIX" --resource-group "$RG" \
+  --query "functionKeys.default" -o tsv</pre>
+<p><strong>You should see:</strong> a long string. Better, keep it in a variable instead of on screen, with the next command.</p>
+<p><strong>If it fails:</strong> "resource not found" means the function app is missing - run Section 8 Step 1.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> A long key string is printed. Go on to Step 2 and keep the key in a variable.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Run Section 8 Step 1 as the <strong>If it fails</strong> line says, then repeat. Still failing: Section 12 table, row <code>401</code> on <code>/api/run</code>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 2 - Keep the key in a variable</p>
+<p><strong>What this does:</strong> stores the key in <code>KEY</code> so it never appears on screen.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">KEY=$(az functionapp keys list --name "func-supplychain-$SUFFIX" --resource-group "$RG" \
+  --query "functionKeys.default" -o tsv)</pre>
+<p><strong>You should see:</strong> nothing. If you prefer per-function keys, <code>az functionapp function keys list --name ... --resource-group ... --function-name run_agent_manually</code> shows those instead.</p>
+<p><strong>If it fails:</strong> same causes as Step 1.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> <code>$KEY</code> holds the key. Go on to Step 3 and process one file over HTTP.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Same causes as Step 1, as the <strong>If it fails</strong> line says. Still failing: Section 12 table, row <code>401</code> on <code>/api/run</code>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 3 - Process one file over HTTP</p>
+<p><strong>What this does:</strong> sends a POST request that asks the function to process one named file, exactly as the trigger would.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">curl -sS -X POST "https://func-supplychain-$SUFFIX.azurewebsites.net/api/run?code=$KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"blob": "new_supplier_audit_fy2027.pdf"}'</pre>
+<p><strong>You should see:</strong> the same JSON that <code>process_blob</code> returns, with <code>"status": "ok"</code>.</p>
+<p><strong>If it fails:</strong> a 401 means the key is missing or wrong - run Step 2 again. A 404 means the function app is still deploying; wait a minute.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> <code>HTTP 200</code> with <code>"status": "ok"</code>. Go on to Step 4 and ask a question over HTTP.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Re-run Step 2 for a 401, or wait a minute for a 404, as the <strong>If it fails</strong> line says. Still failing: Section 12 table, row <code>az functionapp function list</code> prints nothing, and <code>curl</code> returns nothing at all.</p>
+<p style="background:#fff8d6; border-left:8px solid #e0b400; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>The success test is the HTTP status, not the function list.</strong> On this setup <code>az functionapp function list</code> can print nothing even when the app works, so never use it to decide whether the deployment succeeded. The first reply of <code>HTTP 200</code> from <code>curl</code> is the real proof that the packages are installed and the code is running. If you get an empty reply instead, the packages are missing: re-run <code>bash azure_setup/deploy-function.sh</code> and let the 3 to 5 minute upload finish.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 4 - Ask a question over HTTP</p>
+<p><strong>What this does:</strong> sends a question about what is already indexed, and returns the agent's answer as JSON.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">curl -sS -X POST "https://func-supplychain-$SUFFIX.azurewebsites.net/api/run?code=$KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"question": "How did customer OTIF change between FY2025 and FY2026?"}'</pre>
+<p><strong>You should see:</strong> JSON with <code>"status": "ok"</code> and an <code>"agent"</code> object holding <code>intent</code>, <code>plan</code>, <code>answer</code>, <code>grounding_verdict</code> and <code>citations</code>.</p>
+<p><strong>If it fails:</strong> both calls also work as <code>GET</code>, with the values in the query string: <code>.../api/run?code=$KEY&amp;question=...</code>. If POST fails and GET works, your shell is mangling the JSON quotes.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Section 9 is done. Go to Section 9b to see the runs in Application Insights, then Section 10.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Try the <code>GET</code> form as the <strong>If it fails</strong> line says. Still failing: Section 12 table, row <code>401</code> on <code>/api/run</code>.</p>
+
+<hr>
+
+<h2>9b. See it in Application Insights (monitoring and the Application Map)</h2>
+
+<p><strong>What this is.</strong> Application Insights is Azure's monitoring service. It records every request your function app receives and every call it makes out to Azure OpenAI, Azure AI Search and Blob Storage, and draws them as a picture called the <em>Application Map</em>. <code>az functionapp create</code> already made one for you, named <code>func-supplychain-$SUFFIX</code>, in the same resource group. The project's telemetry code (<code>telemetry.py</code>) switches itself on only when <code>APPLICATIONINSIGHTS_CONNECTION_STRING</code> has a value; with an empty value it does nothing at all.</p>
+
+<h3>Why the Application Map can be empty</h3>
+
+<p>An empty map on a first visit is common. These are the likely causes, in the order worth checking. On our run the map did fill in once traffic arrived, so cause 1 was the real one: the map itself is confirmed working, and an empty map almost always means nothing has called the app yet.</p>
+<ol>
+  <li>Nothing has called the app yet. The map only draws boxes after requests arrive, so a brand-new app shows an empty canvas.</li>
+  <li>Data takes 2-5 minutes to appear. Refresh the page, and widen the time range.</li>
+  <li>The function app has no connection string, so the telemetry code stays switched off.</li>
+  <li>The <code>azure-monitor-opentelemetry</code> package failed to start inside the app. The log stream shows why.</li>
+  <li>The app itself is failing. An empty reply from <code>curl</code> means the app is not answering, and an app that does not answer sends nothing.</li>
+</ol>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 1 - Check the app has the setting, by name only</p>
+<p><strong>What this does:</strong> asks whether the function app holds a setting called <code>APPLICATIONINSIGHTS_CONNECTION_STRING</code>. It prints the <em>name</em> only, never the value.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az functionapp config appsettings list --name "func-supplychain-$SUFFIX" --resource-group "$RG" --query "[?name=='APPLICATIONINSIGHTS_CONNECTION_STRING'].name" -o tsv</pre>
+<p><strong>You should see:</strong> <code>APPLICATIONINSIGHTS_CONNECTION_STRING</code>. An empty line means the setting is missing - go to Step 2.</p>
+<p><strong>If it fails:</strong> "resource not found" means the function app is missing - run Section 8 Step 1. An empty <code>$SUFFIX</code> or <code>$RG</code> means the variables were lost in a new window - run the four lines at the top of Section 13.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The setting name is printed. Go on to Step 2 only if the line was empty; otherwise skip Step 2 and go to Step 3.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Run Section 8 Step 1 for a missing app, or the four lines at the top of Section 13 for lost variables, as the <strong>If it fails</strong> line says. Still failing: Section 12 table.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 2 - Set it from the Application Insights resource, without printing it</p>
+<p><strong>What this does:</strong> reads the connection string out of the Application Insights resource into a variable, then writes that variable into the function app's settings. The value never appears on screen.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">CS=$(az monitor app-insights component show --app "func-supplychain-$SUFFIX" --resource-group "$RG" --query connectionString -o tsv)
+az functionapp config appsettings set --name "func-supplychain-$SUFFIX" --resource-group "$RG" \
+  --settings "APPLICATIONINSIGHTS_CONNECTION_STRING=$CS" --output none</pre>
+<p><strong>You should see:</strong> nothing from the second command. The first may ask to install the <code>application-insights</code> extension - answer <code>Y</code>. The app restarts itself after a settings change.</p>
+<p><strong>If it fails:</strong> "resource not found" for the app name means the Application Insights resource has a different name - open the resource group in the portal and read the name from the list. Never <code>echo "$CS"</code>.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The setting is written and the app restarts. Go on to Step 3 and generate some traffic.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Read the real resource name from the resource group as the <strong>If it fails</strong> line says, then repeat. Still failing: Section 12 table, row <code>az</code> refuses to install the <code>application-insights</code> extension.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 3 - Generate some traffic</p>
+<p><strong>What this does:</strong> calls the HTTP route with a question, using the key from Section 9 Step 2, and writes the reply to a file so the answer is not dumped into the window. The status code is printed on its own line.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">curl -sS -m 240 -o /tmp/out.txt -w "HTTP %{http_code}\n" -X POST \
+  "https://func-supplychain-$SUFFIX.azurewebsites.net/api/run?code=$KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"question": "How did customer OTIF change between FY2025 and FY2026?"}'
+head -c 800 /tmp/out.txt</pre>
+<p><strong>You should see:</strong> <code>HTTP 200</code>, then the first 800 characters of JSON with <code>"status": "ok"</code> and an <code>"agent"</code> object. Send 3-5 requests like this, a minute apart, so the map has something to draw.</p>
+<p><strong>If it fails:</strong> <code>HTTP 200</code> is good. <code>HTTP 404</code> means the functions are not registered yet - wait 2 minutes and retry. <code>HTTP 500</code>, or an empty reply, means the app itself is erroring: read the runs in Application Insights (Section 8 Step 7) - <code>az webapp log tail</code> answers <code>404</code> on this plan, so it cannot help here. A <code>401</code> means <code>$KEY</code> is empty - run Section 9 Step 2 again.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> <code>HTTP 200</code> and JSON come back. Go on to Step 4 and open the map in the portal.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Wait two minutes for a 404, read Section 8 Step 7 for a 500, or re-run Section 9 Step 2 for a 401, as the <strong>If it fails</strong> line says. Still failing: Section 12 table, row <em>The Application Map is empty</em>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 4 - Wait, then open the map in the portal</p>
+<p><strong>What this does:</strong> nothing in Terminal. Wait 3-5 minutes after the traffic, then look at the picture.</p>
+<ol>
+  <li>Open <strong>https://portal.azure.com</strong> and sign in.</li>
+  <li>Click the search box at the top and type <code>func-supplychain-</code> followed by your SUFFIX. Click the <strong>Application Insights</strong> resource that appears.</li>
+  <li>In the left menu, under <strong>Investigate</strong>, click <strong>Application map</strong>.</li>
+  <li>Set the time range to <strong>Last 30 minutes</strong> and click <strong>Refresh</strong>.</li>
+</ol>
+<p><strong>You should see:</strong> boxes and arrows, described in Step 5. This is confirmed on our run: after three requests and about five minutes, the map filled in with the time range set to <strong>Last 30 minutes</strong> and <strong>Refresh</strong> clicked. <strong>Live metrics</strong> (also under <strong>Investigate</strong>) and <strong>Transaction search</strong> (<strong>Investigate</strong>, then <strong>Transaction search</strong>) show individual requests sooner than the map does, so try those while you wait.</p>
+<p><strong>If it fails:</strong> an empty map after traffic and five minutes is covered by the five likely causes above. Go back to Step 1 and confirm the setting is there.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Boxes and arrows appear. Go on to Step 5 and compare the map with the description there.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Go back to Step 1 as the <strong>If it fails</strong> line says and confirm the setting is there. Still failing: Section 12 table, row <em>The Application Map is empty</em>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 5 - What a working map looks like</p>
+<p>A working map shows one box for the function app, with arrows leaving it to a box for <strong>Azure OpenAI</strong>, a box for <strong>Azure AI Search</strong> and a box for <strong>Blob Storage</strong>. Each box carries a request count. If you see the function app box but no arrows, the app answered but made no outbound calls - usually a question that the router refused before searching.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Go on to Step 6 if you want telemetry from your Mac as well; otherwise go to Section 10.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 6 - Optional: send telemetry from your Mac as well</p>
+<p><strong>What this does:</strong> puts the same connection string into <code>.env</code>, so <code>python UI/server.py</code> and <code>python run_query.py</code> also report to Application Insights. The first command reads the string into a variable without printing it; the second rewrites only the <code>APPLICATIONINSIGHTS_CONNECTION_STRING=</code> line in <code>.env</code> and prints nothing.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">CS=$(az monitor app-insights component show --app "func-supplychain-$SUFFIX" --resource-group "$RG" --query connectionString -o tsv)
+export CS
+python3 - &lt;&lt;'E'
+import os, pathlib
+p = pathlib.Path(".env")
+out = []
+for line in p.read_text().splitlines(True):
+    if line.startswith("APPLICATIONINSIGHTS_CONNECTION_STRING="):
+        line = "APPLICATIONINSIGHTS_CONNECTION_STRING=" + os.environ["CS"] + "\n"
+    out.append(line)
+p.write_text("".join(out))
+E</pre>
+<p><strong>You should see:</strong> nothing. Then run <code>python run_query.py</code> and look for the line <code>Application Insights: sending traces as "supply-chain-rag"</code>. On the map, your Mac then appears as a box named <code>supply-chain-rag</code>.</p>
+<p><strong>If it fails:</strong> if that line does not appear, the value in <code>.env</code> is still empty - run the block again from the project folder. If the map is still empty after traffic and five minutes, use <strong>Transaction search</strong>, or the <strong>Logs</strong> page with the query <code>traces | take 20</code>, and paste what you see to get help.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Section 9b is done. Go to Section 10.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Run the block again from the project folder, as the <strong>If it fails</strong> line says, or use Transaction search and the <code>traces | take 20</code> query. Still failing: Section 12 table, row <em>The Application Map is empty</em>.</p>
+
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>Never paste the connection string or the function key into a chat, a document or a commit.</strong> Both are passwords. The commands above keep them in variables for exactly that reason.</p>
+
+<hr>
+
+<h2>10. Optional - save this guide into Azure</h2>
+
+<p>A private container is a convenient place to keep the documentation next to the data.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 1 - Create a documentation container</p>
+<p><strong>What this does:</strong> creates one more container, kept private by <code>--public-access off</code>.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az storage container create --name documentation \
+  --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --public-access off --output none</pre>
+<p><strong>You should see:</strong> nothing.</p>
+<p><strong>If it fails:</strong> an empty connection string means you skipped Section 8 Step 2. Run the line-by-line <code>.env</code> loop from Section 8 Step 2 first.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> The container exists. Go on to Step 2 and upload a guide file.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Run the <code>.env</code> loop from Section 8 Step 2 as the <strong>If it fails</strong> line says, then repeat. Still failing: Section 12 table, row <code>The specified container does not exist</code>.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 2 - Upload a guide file</p>
+<p><strong>What this does:</strong> uploads the older markdown guide into that container.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az storage blob upload --container-name documentation \
+  --file docs/AZURE_STEP_BY_STEP.md --name AZURE_STEP_BY_STEP.md \
+  --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --overwrite</pre>
+<p><strong>You should see:</strong> a progress block ending at <code>100.0000%</code>.</p>
+<p><strong>If it fails:</strong> "container not found" means Step 1 was skipped. To store this HTML guide instead, run the same command with <code>--file docs/Azure_Supply_Chain_Beginner_Guide.html --name Azure_Supply_Chain_Beginner_Guide.html</code>.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Section 10 is done. Go to Section 11.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Run Step 1 first as the <strong>If it fails</strong> line says, then repeat. Still failing: Section 12 table.</p>
+
+<hr>
+
+<h2>11. STOP THE METER - teardown</h2>
+
+<h3>Drawing 6 - Cost meter</h3>
+
+<svg viewBox="0 0 780 260" width="100%" style="max-width:780px; height:auto; display:block; margin:0 auto;" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Cost meter: resources cost money every hour while they exist, and teardown stops the charges">
+  <defs>
+    <marker id="a6" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"></path>
+    </marker>
+  </defs>
+  <rect x="20" y="40" width="220" height="60" rx="6" fill="#ffedd5" stroke="#ea580c" stroke-width="2"></rect>
+  <text x="130" y="66" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#7c2d12">Resources exist</text>
+  <text x="130" y="86" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#7c2d12">in Azure, right now</text>
+  <line x1="242" y1="70" x2="264" y2="70" stroke="#334155" stroke-width="2" marker-end="url(#a6)"></line>
+
+  <rect x="270" y="30" width="80" height="170" rx="6" fill="#ffffff" stroke="#334155" stroke-width="2"></rect>
+  <rect x="276" y="90" width="68" height="104" fill="#ef4444"></rect>
+  <text x="310" y="80" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="bold" fill="#c62828">$</text>
+  <text x="310" y="222" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#334155">money per hour</text>
+
+  <line x1="352" y1="110" x2="414" y2="80" stroke="#334155" stroke-width="2" marker-end="url(#a6)"></line>
+
+  <rect x="420" y="40" width="200" height="60" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="2"></rect>
+  <text x="520" y="66" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#14532d">bash azure_setup/</text>
+  <text x="520" y="86" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#14532d">teardown.sh</text>
+
+  <line x1="520" y1="102" x2="520" y2="146" stroke="#334155" stroke-width="2" marker-end="url(#a6)"></line>
+
+  <rect x="420" y="150" width="200" height="60" rx="6" fill="#e9f9ee" stroke="#16a34a" stroke-width="2"></rect>
+  <text x="520" y="176" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#14532d">Charges stop</text>
+  <text x="520" y="196" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#14532d">meter goes to zero</text>
+
+  <text x="20" y="150" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#334155">While the box exists,</text>
+  <text x="20" y="170" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#334155">Azure bills you.</text>
+</svg>
+<p style="font-size:14px; color:#444444; text-align:center; margin:6px 0 24px 0;"><em>Drawing 6 - Cost meter. The meter runs while the resources exist, and teardown stops it.</em></p>
+
+<p>While the resources exist you pay for Azure AI Search (Basic, per hour), the App Service plan (B1, per hour), and per-token use of Azure OpenAI. The function app on the Consumption plan costs almost nothing when idle.</p>
+
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>AI Search Basic bills every hour, whether you use it or not.</strong> The cheapest way to stop the meter is teardown: <code>bash azure_setup/teardown.sh</code>. Nothing else in this guide stops that hourly charge. The stray <code>gpt-4o</code> deployment left behind by the first failed attempt is harmless - it costs nothing while idle, and teardown removes it with everything else.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 1 - Delete everything</p>
+<p><strong>What this does:</strong> asks you to confirm, then deletes the whole resource group and every resource inside it. This cannot be undone.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">bash azure_setup/teardown.sh</pre>
+<p><strong>You should see:</strong> <code>Delete resource group 'rg-supply-chain-rag' and everything in it? Type yes to confirm:</code>. Type <code>yes</code> and press Return. It then prints <code>Deletion started. It finishes in a few minutes -- check the Azure portal.</code></p>
+<p><strong>If it fails:</strong> anything other than <code>yes</code> cancels safely and prints <code>Cancelled. Nothing was deleted.</code> The function app is inside the same resource group, so it goes too - there is nothing extra to remove.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> Deletion started. Go on to Step 2 and confirm the resource group is gone.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Type <code>yes</code> exactly as the <strong>If it fails</strong> line says, then run the script again. Still failing: Section 12 table.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 2 - Confirm it is gone</p>
+<p><strong>What this does:</strong> asks Azure whether the resource group still exists.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az group exists --name "$RG"</pre>
+<p><strong>You should see:</strong> <code>false</code>. If it still says <code>true</code>, the deletion is still running - wait a few minutes and check again.</p>
+<p><strong>If it fails:</strong> an empty <code>$RG</code> means the variable was lost in a new window. Run <code>export RG=rg-supply-chain-rag</code> and retry.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> <code>false</code> is printed. Go on to Step 3 and free the OpenAI names.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Run <code>export RG=rg-supply-chain-rag</code> as the <strong>If it fails</strong> line says and retry. Still failing: Section 12 table.</p>
+
+<p style="font-size:19px; font-weight:bold; margin:22px 0 6px 0;">&#9744; Step 3 - Free the OpenAI names immediately (optional)</p>
+<p>Azure OpenAI is soft-deleted for 48 hours, which blocks reusing the same names. <code>teardown.sh</code> ends with the two commands that purge it immediately. These are the same two commands, written out:</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">az cognitiveservices account list-deleted
+az cognitiveservices account purge --name &lt;name&gt; --resource-group rg-supply-chain-rag --location &lt;region&gt;</pre>
+<p><strong>You should see:</strong> the first command lists any soft-deleted OpenAI resources; the second prints nothing when it succeeds.</p>
+<p><strong>If it fails:</strong> replace <code>&lt;name&gt;</code> with your OpenAI resource name and <code>&lt;region&gt;</code> with your location. If the name is not in the list, there is nothing to purge.</p>
+<p style="background:#e6f6ea; border-left:8px solid #1b8a3a; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#1b8a3a;">IF IT WORKED (green):</strong> You are done - the meter is stopped and the names are free.</p>
+<p style="background:#fdecec; border-left:8px solid #c62828; padding:10px 16px; margin:10px 0; font-size:17px;"><strong style="color:#c62828;">IF IT FAILED (red):</strong> Replace <code>&lt;name&gt;</code> and <code>&lt;region&gt;</code> as the <strong>If it fails</strong> line says. Still failing: Section 12 table.</p>
+
+<hr>
+
+<h2>12. Troubleshooting in plain English</h2>
+
+<table>
+  <tr><th style="width:30%;">What you see</th><th style="width:30%;">What it means</th><th>What to do</th></tr>
+  <tr><td><code>Please run 'az login' to setup account.</code></td><td>The command line tool has no session, or it expired.</td><td>Run <code>az login</code>, then <code>az account show --query name -o tsv</code>.</td></tr>
+  <tr><td><code>az: command not found</code></td><td>This Terminal window has not loaded the PATH line, which happens in every new window.</td><td>Run <code>export PATH="$PATH:$HOME/azure-cli-venv/bin"</code> again. If it still fails, open a new window; the line in <code>~/.bash_profile</code> is only read at start-up.</td></tr>
+  <tr><td><code>No module named dotenv</code>, or pymupdf fails to build during <code>pip install</code></td><td>The wrong Python is in use: the CLI's Python took over, usually because its folder was put at the front of PATH.</td><td>Run <code>source ../.venv/bin/activate</code>, check that <code>which python</code> ends in <code>LangChain_Basic/.venv/bin/python</code>, then <code>python -m pip install -r requirements.txt</code>.</td></tr>
+  <tr><td><code>ServiceModelDeprecating</code></td><td>That model is being retired and cannot be deployed any more. This is what happened to <code>gpt-4o-mini</code>.</td><td>Deploy <code>gpt-5.1</code> version <code>2025-11-13</code> instead, as in Section 4b Step 3.</td></tr>
+  <tr><td><code>InvalidResourceLocation</code> or <code>InsufficientResourcesAvailable</code></td><td>The region is out of capacity for AI Search. This is what happened in eastus2.</td><td>Create the search service in <code>centralus</code>: <code>export SEARCH_LOCATION=centralus</code> and re-run the search command. Mixing regions is fine.</td></tr>
+  <tr><td><code>... already exists in location centralus</code></td><td>The search service already exists in one region, and one name cannot exist in two regions.</td><td>Retry with the same region it already exists in, or delete the service first and create it again.</td></tr>
+  <tr><td><code>RuntimeError: These settings are missing from .env</code></td><td>Some values in <code>.env</code> are empty, usually after pasting the block by hand.</td><td>Run <code>export SUFFIX=12345</code> then <code>bash azure_setup/fill-env.sh</code>, and check with the <code>awk</code> command in Section 5 Step 2.</td></tr>
+  <tr><td><code>Quota exceeded</code> or "model not available in this region"</td><td>Your subscription has no quota for that model there.</td><td>Run the <code>az cognitiveservices model list</code> command from Section 4b Step 3 and pick a model whose lifecycle is <code>GenerallyAvailable</code>.</td></tr>
+  <tr><td><code>401</code> or <code>Invalid API key</code> from AI Search</td><td>The key is not the admin key, or it was copied short.</td><td>Run <code>az search admin-key show --service-name "$SEARCH" --resource-group "$RG" --query primaryKey -o tsv</code> and paste it whole (32 characters).</td></tr>
+  <tr><td><code>The specified container does not exist</code></td><td>The container was never created, or the name has a typo.</td><td>Run <code>az storage container create --name supply-chain-docs --connection-string "$CONN" --output none</code>.</td></tr>
+  <tr><td><code>az storage blob upload</code> times out</td><td>A large PDF on a slow link.</td><td>Add <code>--timeout 600</code>, or upload from the portal.</td></tr>
+  <tr><td>The trigger never fires</td><td>It is still polling, or the path setting is wrong.</td><td>Wait a few minutes. Then check that <code>az functionapp config appsettings list --name "func-supplychain-$SUFFIX" --resource-group "$RG" --query "[?name=='BLOB_TRIGGER_PATH'].value" -o tsv</code> shows <code>supply-chain-docs/{name}</code>.</td></tr>
+  <tr><td><code>401</code> on <code>/api/run</code></td><td>No function key, or the wrong one.</td><td>Run <code>az functionapp keys list --name "func-supplychain-$SUFFIX" --resource-group "$RG" --query "functionKeys.default" -o tsv</code> and pass it as <code>?code=</code>.</td></tr>
+  <tr><td><code>ModuleNotFoundError: config</code> in the function log</td><td>The zip was built without the project files.</td><td>Re-run <code>RESOURCE_GROUP=$RG FUNC_NAME="func-supplychain-$SUFFIX" bash azure_setup/deploy-function.sh</code>.</td></tr>
+  <tr><td>A question never reaches an uploaded document</td><td><code>doc_type</code> is <code>uploaded</code>, which is not in <code>config.VALID_PAIRS</code>, so the router drops it.</td><td>Expected behaviour: the chunks are indexed but the router will not plan a search for them. Ask about the five known documents, or extend the router.</td></tr>
+  <tr><td><code>Invalid connection string</code>, or <code>missing required connection details</code></td><td>The connection string was cut in half. Plain <code>source .env</code> stops at the <code>;</code> inside the storage connection string, so only part of the value was exported.</td><td>Do not use <code>source .env</code>. Load <code>.env</code> with the line-by-line loop in Section 8 Step 2, then retry the command.</td></tr>
+  <tr><td>The Application Map is empty</td><td>Nothing has called the app yet, the data is still arriving, the setting is missing, or the app is failing.</td><td>Work through Section 9b: check the setting by name, send 3-5 requests, wait 3-5 minutes, then use Transaction search or the Logs query <code>traces | take 20</code>.</td></tr>
+  <tr><td><code>az functionapp function list</code> prints nothing, and <code>curl</code> returns nothing at all - not even an error</td><td>Azure's remote build did not install the Python packages on this Linux Consumption app.</td><td>Re-run <code>RESOURCE_GROUP=$RG FUNC_NAME="func-supplychain-$SUFFIX" bash azure_setup/deploy-function.sh</code> and let the 3 to 5 minute upload finish. The success test is the <code>curl</code> HTTP status, never the function list.</td></tr>
+  <tr><td><code>This API isn't available in this environment yet!</code></td><td><code>az functionapp deploy ... --type zip</code> is not supported here.</td><td>Use <code>az functionapp deployment source config-zip</code>, which is what <code>deploy-function.sh</code> runs.</td></tr>
+  <tr><td><code>404</code> on <code>/logstream</code> from <code>az webapp log tail</code></td><td>The log stream is not available on Linux Consumption. It is not an error in your app.</td><td>Use Application Insights: <strong>Transaction search</strong>, or the <strong>Logs</strong> query <code>traces | take 20</code> (Section 8 Step 7).</td></tr>
+  <tr><td><code>pymupdf4llm 2.0</code> installed, then the import fails</td><td>Version 2.0 is an empty placeholder with no code in it.</td><td>Keep the pin <code>pymupdf4llm==0.0.24</code> in <code>function_app/requirements.txt</code> and deploy again.</td></tr>
+  <tr><td>The deployment stops half-way, or the upload never finishes</td><td><strong>Ctrl+C</strong> was pressed during the upload.</td><td>Re-run <code>bash azure_setup/deploy-function.sh</code> and wait: the zip is about 90 MB and the upload takes 3 to 5 minutes.</td></tr>
+  <tr><td>A Terminal is stuck and <code>wq:</code> does nothing</td><td><code>az webapp log tail</code> is still running, and <code>wq:</code> is a vim habit, not a command.</td><td>Press <strong>Ctrl+C</strong> to get the prompt back.</td></tr>
+  <tr><td><code>az</code> refuses to install the <code>application-insights</code> extension</td><td>That extension is in preview, and dynamic install of preview extensions is off.</td><td>Run <code>az config set extension.dynamic_install_allow_preview=true</code>, then answer <code>Y</code> to the install question.</td></tr>
+  <tr><td>You are unsure what a flag does</td><td>You do not have to guess.</td><td>Ask the tool itself: <code>az functionapp create --help</code> lists every flag with a short description.</td></tr>
+</table>
+
+<hr>
+
+<h2>13. One-page cheat sheet</h2>
+
+<p>The ten commands you will use most, in the order you will need them.</p>
+
+<p style="background:#e8f1ff; border-left:8px solid #1f6feb; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>Every time you open a new Terminal window, run these four lines first.</strong> Nothing else in this sheet works until you do.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">cd "/Users/msp/Desktop/TTU ONE DRIVE Copy/Bootcamps/AI&amp;ML/Sep 27 Batch HandsOn/LangChain_Basic/Agentic RAG for Supply Chain on Azure"
+source ../.venv/bin/activate
+export PATH="$PATH:$HOME/azure-cli-venv/bin"
+export SUFFIX=12345</pre>
+
+<p style="background:#fff8d6; border-left:8px solid #e0b400; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>To load <code>.env</code>, use this loop - never <code>set -a; source .env</code>.</strong> The storage connection string contains a <code>;</code>, and <code>source</code> stops there, so the value arrives cut in half. The loop reads each line whole and splits at the first <code>=</code> only. It prints nothing.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">while IFS= read -r line || [ -n "$line" ]; do case "$line" in ''|\#*) continue ;; esac; export "${line%%=*}=${line#*=}"; done &lt; .env</pre>
+
+<p><strong>1. Go to the project folder</strong></p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">cd "/Users/msp/Desktop/TTU ONE DRIVE Copy/Bootcamps/AI&amp;ML/Sep 27 Batch HandsOn/LangChain_Basic/Agentic RAG for Supply Chain on Azure"</pre>
+
+<p><strong>2. Switch on the Python environment</strong></p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">source ../.venv/bin/activate</pre>
+
+<p><strong>3. Fix your names</strong></p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">export SUFFIX=12345
+export LOCATION=eastus2
+export SEARCH_LOCATION=centralus
+export RG=rg-supply-chain-rag
+export OPENAI=aoai-supplychain-$SUFFIX
+export SEARCH=srch-supplychain-$SUFFIX
+export STORAGE=stsupplychain$SUFFIX
+export CONTAINER=supply-chain-docs</pre>
+
+<p><strong>4. Create everything in Azure</strong></p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">SUFFIX=$SUFFIX bash azure_setup/provision.sh</pre>
+
+<p><strong>5. Create and fill the .env file</strong></p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">export SUFFIX=12345
+bash azure_setup/fill-env.sh</pre>
+
+<p><strong>6. Upload the PDFs, then build the search index</strong></p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">python ingestion/upload_pdfs.py
+python run_ingestion.py</pre>
+
+<p><strong>7. Ask a question</strong></p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">python run_query.py</pre>
+
+<p><strong>8. Turn on the automatic trigger</strong></p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">SUFFIX=$SUFFIX RESOURCE_GROUP=$RG STORAGE=$STORAGE bash azure_setup/provision-function.sh</pre>
+
+<p><strong>9. Deploy the code again, then test it</strong></p>
+<p>Run this after any code change. It installs the Linux packages on your Mac, zips them with the code, switches the remote build off and uploads. The zip is about 90 MB and the upload takes 3 to 5 minutes, so do not press Ctrl+C.</p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">RESOURCE_GROUP=$RG FUNC_NAME="func-supplychain-$SUFFIX" bash azure_setup/deploy-function.sh</pre>
+<p><strong>The success test is the HTTP status:</strong> a <code>curl</code> call to <code>/api/run</code> that answers <code>HTTP 200</code> with JSON. <code>az functionapp function list</code> can print nothing on this setup even when the app works, so never use it as the test. <code>az webapp log tail</code> answers <code>404</code> here; read the runs in Application Insights instead (Section 8 Step 7).</p>
+
+<p><strong>10. Stop the meter</strong></p>
+<div style="font-size:13px; color:#666666; margin:12px 0 2px 0; letter-spacing:1px;">COPY</div>
+<pre style="background:#f2f2f2; border:4px solid #444444; border-radius:4px; padding:12px; font-size:15px; line-height:1.45; white-space:pre-wrap; word-break:break-word; margin:0 0 10px 0; font-family:Menlo, Consolas, monospace;">bash azure_setup/teardown.sh</pre>
+
+<hr>
+
+<h2>Steps checklist road map</h2>
+
+<h3>Drawing 5 - Steps checklist road map</h3>
+
+<svg viewBox="0 0 780 470" width="100%" style="max-width:780px; height:auto; display:block; margin:0 auto;" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Steps checklist road map: nine steps from before you start to starting it by HTTP call, ending at a flag">
+  <line x1="60" y1="56" x2="60" y2="376" stroke="#1f6feb" stroke-width="3"></line>
+  <circle cx="60" cy="40" r="16" fill="#dbeafe" stroke="#1f6feb" stroke-width="2"></circle>
+  <text x="60" y="45" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#123a75">1</text>
+  <text x="90" y="45" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1a1a1a">Before you start: tools, az login, providers</text>
+
+  <circle cx="60" cy="84" r="16" fill="#dbeafe" stroke="#1f6feb" stroke-width="2"></circle>
+  <text x="60" y="89" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#123a75">2</text>
+  <text x="90" y="89" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1a1a1a">Open Terminal, go to the project folder</text>
+
+  <circle cx="60" cy="128" r="16" fill="#dbeafe" stroke="#1f6feb" stroke-width="2"></circle>
+  <text x="60" y="133" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#123a75">3</text>
+  <text x="90" y="133" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1a1a1a">Write down your names and SUFFIX</text>
+
+  <circle cx="60" cy="172" r="16" fill="#dbeafe" stroke="#1f6feb" stroke-width="2"></circle>
+  <text x="60" y="177" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#123a75">4</text>
+  <text x="90" y="177" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1a1a1a">Create everything in Azure</text>
+
+  <circle cx="60" cy="216" r="16" fill="#dbeafe" stroke="#1f6feb" stroke-width="2"></circle>
+  <text x="60" y="221" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#123a75">5</text>
+  <text x="90" y="221" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1a1a1a">Fill in the .env file</text>
+
+  <circle cx="60" cy="260" r="16" fill="#dbeafe" stroke="#1f6feb" stroke-width="2"></circle>
+  <text x="60" y="265" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#123a75">6</text>
+  <text x="90" y="265" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1a1a1a">Upload the PDFs, build the index</text>
+
+  <circle cx="60" cy="304" r="16" fill="#dbeafe" stroke="#1f6feb" stroke-width="2"></circle>
+  <text x="60" y="309" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#123a75">7</text>
+  <text x="90" y="309" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1a1a1a">Ask a question by hand</text>
+
+  <circle cx="60" cy="348" r="16" fill="#dbeafe" stroke="#1f6feb" stroke-width="2"></circle>
+  <text x="60" y="353" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#123a75">8</text>
+  <text x="90" y="353" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1a1a1a">Turn on the automatic trigger</text>
+
+  <circle cx="60" cy="392" r="16" fill="#dbeafe" stroke="#1f6feb" stroke-width="2"></circle>
+  <text x="60" y="397" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#123a75">9</text>
+  <text x="90" y="397" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1a1a1a">Start it by HTTP call</text>
+
+  <line x1="60" y1="410" x2="60" y2="452" stroke="#334155" stroke-width="3"></line>
+  <polygon points="60,410 112,424 60,438" fill="#c62828"></polygon>
+  <text x="124" y="430" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#c62828">Done - then run teardown</text>
+</svg>
+<p style="font-size:14px; color:#444444; text-align:center; margin:6px 0 24px 0;"><em>Drawing 5 - Steps checklist road map. Nine steps, one flag, and one teardown at the end.</em></p>
+
+<p style="background:#e8f1ff; border-left:8px solid #1f6feb; padding:14px 18px; margin:18px 0; font-size:17px;"><strong>You are finished when</strong> the flag is reached and <code>az group exists --name "$RG"</code> prints <code>false</code>. That last line is the one that stops the bill.</p>
+
+</body>
+</html>
