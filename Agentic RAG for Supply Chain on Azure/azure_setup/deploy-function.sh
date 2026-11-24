@@ -93,5 +93,4 @@ az functionapp deployment source config-zip --name "$FUNC_NAME" --resource-group
     --src "$ZIP_DIR/function.zip" --timeout 900 --output none
     # --timeout 900: a 90 MB zip needs longer than the default timeout
 
-echo "Done. Watch the log stream with:"
-echo "  az webapp log tail --name $FUNC_NAME --resource-group $RESOURCE_GROUP"
+echo "Done. To see logs, use Application Insights > Logs in the portal (az log tail is not available on this plan)."
